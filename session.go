@@ -1,6 +1,7 @@
 package sessions
 
 import (
+  "fmt"
   //The option -u instructs 'get' to update the module with dependencies.
   //go get -u github.com/google/uuid
   "github.com/google/uuid"
@@ -9,29 +10,37 @@ import (
   "golang.org/x/crypto/bcrypt"
   "net/http"
   "strings"
+  "sync/atomic"
   "time"
 )
 
-const (
- sessionTimeout time.Duration = 10 * time.Minute
+var (
+  //Keep the variables unexported (lowercase) so they can't be modified directly.
+  sessionTimeout atomic.Int64
 )
 
-type session_token struct {
-  Username string
-  Expiry time.Time  //Enforce periodic session termination as a way to prevent session hijacking.
-  CsrfToken string
+func init() {
+  sessionTimeout.Store(int64(10 * time.Minute))
+}
+
+type session_token struct{
+  userName string
+  expiry time.Time  //Enforce periodic session termination as a way to prevent session hijacking.
+  csrfToken string
 }
 
 //Determine if a session has expired.
 func IsSessionExpired(sessionToken string) bool {
-  shr.slock.Lock()  //Writer lock.
-  defer shr.slock.Unlock()
-  s, exists := shr.sessions[sessionToken]
+  shr.session_lock.RLock()
+  st, exists := shr.sessions[sessionToken]
+  shr.session_lock.RUnlock()
   if exists {
-    var expired bool = s.Expiry.Before(time.Now())
+    //If expiry is BEFORE the current time, it has expired.
+    var expired bool = st.expiry.Before(time.Now())
     if expired {
-      //Delete the session.
-      delete(shr.sessions, sessionToken)
+      shr.session_lock.Lock()  //Writer.
+      delete(shr.sessions, sessionToken)  //Delete the session.
+      shr.session_lock.Unlock()
     }
     return expired
   }
@@ -39,9 +48,9 @@ func IsSessionExpired(sessionToken string) bool {
 }
 
 func SessionExists(sessionToken string) bool {
-  shr.slock.RLock()  //Readers lock.
+  shr.session_lock.RLock()  //Readers lock.
   _, exists := shr.sessions[sessionToken]
-  shr.slock.RUnlock()
+  shr.session_lock.RUnlock()
   return exists
 }
 
@@ -56,11 +65,11 @@ func CompareHashAndPassword(hashedPassword[]byte, password []byte) (bool, error)
 }
 
 func CompareUuids(csrf, sessionToken string) bool {
-  shr.slock.RLock()
-  defer shr.slock.RUnlock()
-  session, exists := shr.sessions[sessionToken]
+  shr.session_lock.RLock()
+  st, exists := shr.sessions[sessionToken]
+  shr.session_lock.RUnlock()
   if exists {
-    return strings.EqualFold(csrf, session.CsrfToken)
+    return strings.EqualFold(csrf, st.csrfToken)
   }
   return exists
 }
@@ -68,34 +77,34 @@ func CompareUuids(csrf, sessionToken string) bool {
 func AddEntryToSessions(userName string) (sessionToken string, session session_token) {
   /***
   Session based authentication keeps the users' sessions secure in a couple of ways:
-  1. Since the session tokens are randomly generated, its near-impossible for a malicious user to
-     brute-force his way into a user's session.
-  2. If a user's session token is compromised somehow, it cannot be used after its expiry. This is
-     why the expiry time is restricted to small intervals (a few seconds to a couple of minutes).
+  1. Since the session tokens are randomly generated, its near-impossible for a malicious user to brute-force his way into a
+     user's session.
+  2. If a user's session token is compromised somehow, it cannot be used after its expiry. This is why the expiry time is
+     restricted to small intervals (a few seconds to a couple of minutes).
   ***/
   sessionToken = uuid.NewString()
-  shr.slock.Lock()
-  defer shr.slock.Unlock()
-  shr.sessions[sessionToken] = session_token{
-    Username: userName,
-    Expiry: time.Now().Add(sessionTimeout),
-    CsrfToken: uuid.NewString(),
+  session = session_token{
+    userName: userName,
+    expiry: time.Now().Add(time.Duration(sessionTimeout.Load())),
+    csrfToken: uuid.NewString(),
   }
-  session = shr.sessions[sessionToken]
+  shr.session_lock.Lock()  //Writer.
+  shr.sessions[sessionToken] = session
+  shr.session_lock.Unlock()
   return
 }
 
 func UpdateEntryInSessions(oldSessionToken string) (newSessionToken string, session session_token) {
   newSessionToken = uuid.NewString()
-  shr.slock.Lock()
-  defer shr.slock.Unlock()
-  shr.sessions[newSessionToken] = session_token{
-    Username: shr.sessions[oldSessionToken].Username,
-    Expiry: time.Now().Add(sessionTimeout),
-    CsrfToken: uuid.NewString(),
+  session = session_token{
+    expiry: time.Now().Add(time.Duration(sessionTimeout.Load())),
+    csrfToken: uuid.NewString(),
   }
+  shr.session_lock.Lock()  //Writer.
+  defer shr.session_lock.Unlock()
+  session.userName = shr.sessions[oldSessionToken].userName
   delete(shr.sessions, oldSessionToken)
-  session = shr.sessions[newSessionToken]
+  shr.sessions[newSessionToken] = session
   return
 }
 
@@ -119,9 +128,9 @@ func CreateCookie(sessionToken string) (cookie *http.Cookie) {
 }
 
 func DeleteSession(sessionToken string) (cookie *http.Cookie) {
-  shr.slock.Lock()
+  shr.session_lock.Lock()  //Writer.
   delete(shr.sessions, sessionToken)
-  shr.slock.Unlock()
+  shr.session_lock.Unlock()
   cookie = &http.Cookie{
     Name: "session_token",
     Value: "",
@@ -135,7 +144,26 @@ func DeleteSession(sessionToken string) (cookie *http.Cookie) {
 }
 
 func GetUserName(sessionToken string) string {
-  shr.slock.RLock()
-  defer shr.slock.RUnlock()
-  return shr.sessions[sessionToken].Username
+  shr.session_lock.RLock()
+  defer shr.session_lock.RUnlock()
+  return shr.sessions[sessionToken].userName
+}
+
+func GetNumberOfSessions() int {
+  shr.session_lock.RLock()
+  defer shr.session_lock.RUnlock()
+  return len(shr.sessions)
+}
+
+func SetSessionTimeout(timeout time.Duration) {
+  sessionTimeout.Store(int64(timeout))
+}
+
+func GetSessionTimeout() time.Duration {
+  return time.Duration(sessionTimeout.Load())
+}
+
+func GetSessionTimeoutString() string {
+  d := time.Duration(sessionTimeout.Load())
+  return fmt.Sprintf("%02dh%02dm%02ds%05dms", int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60, int(d.Milliseconds())%1000)
 }
