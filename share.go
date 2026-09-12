@@ -32,7 +32,9 @@ import "github.com/juan-carlos-trimino/gpsessions"
 To upgrade/downgrade the version of the package, move to the root of the module's directory
 structure (where the go.mod file is located) and execute
 (go get -u "{package-name}@{git-commit-hash}").
-$ go get -u "github.com/juan-carlos-trimino/gpsessions@xxxxxxx"
+$ go get -u "github.com/juan-carlos-trimino/go-sessions@xxxxxxx"
+or
+$ go get -u "github.com/juan-carlos-trimino/go-sessions@v1.x.x"
 ***/
 
 import (
