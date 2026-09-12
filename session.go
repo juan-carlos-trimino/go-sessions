@@ -171,3 +171,11 @@ func GetNewUuid() string {
 func (st *session_token) GetCsrfToken() string {
   return st.csrfToken
 }
+
+func (st *session_token) GetExpiry() time.Time {
+  return st.expiry
+}
+
+func (st *session_token) GetUserName() string {
+  return st.userName
+}
