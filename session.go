@@ -74,6 +74,21 @@ func CompareUuids(csrf, sessionToken string) bool {
   return exists
 }
 
+func CreateCookie(sessionToken string) (cookie *http.Cookie) {
+  //https://en.wikipedia.org/wiki/HTTP_cookie
+  //https://httpwg.org/specs/rfc6265.html
+  cookie = &http.Cookie{
+    Name: "session_token",
+    Value: sessionToken,
+    Path: "/",
+    // Expires: sessions[sessionToken].Expiry,
+    HttpOnly: true,
+    SameSite: http.SameSiteStrictMode,
+    Secure: false,
+  }
+  return
+}
+
 func AddEntryToSessions(userName string) (sessionToken string, session session_token) {
   /***
   Session based authentication keeps the users' sessions secure in a couple of ways:
@@ -108,25 +123,6 @@ func UpdateEntryInSessions(oldSessionToken string) (newSessionToken string, sess
   return
 }
 
-func GetNewUuid() string {
-  return uuid.NewString()
-}
-
-func CreateCookie(sessionToken string) (cookie *http.Cookie) {
-  //https://en.wikipedia.org/wiki/HTTP_cookie
-  //https://httpwg.org/specs/rfc6265.html
-  cookie = &http.Cookie{
-    Name: "session_token",
-    Value: sessionToken,
-    Path: "/",
-    // Expires: sessions[sessionToken].Expiry,
-    HttpOnly: true,
-    SameSite: http.SameSiteStrictMode,
-    Secure: false,
-  }
-  return
-}
-
 func DeleteSession(sessionToken string) (cookie *http.Cookie) {
   shr.session_lock.Lock()  //Writer.
   delete(shr.sessions, sessionToken)
@@ -143,6 +139,19 @@ func DeleteSession(sessionToken string) (cookie *http.Cookie) {
   return
 }
 
+func SetSessionTimeout(timeout time.Duration) {
+  sessionTimeout.Store(int64(timeout))
+}
+
+func GetSessionTimeout() time.Duration {
+  return time.Duration(sessionTimeout.Load())
+}
+
+func GetSessionTimeoutString() string {
+  d := time.Duration(sessionTimeout.Load())
+  return fmt.Sprintf("%02dh%02dm%02ds%05dms", int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60, int(d.Milliseconds())%1000)
+}
+
 func GetUserName(sessionToken string) string {
   shr.session_lock.RLock()
   defer shr.session_lock.RUnlock()
@@ -155,15 +164,10 @@ func GetNumberOfSessions() int {
   return len(shr.sessions)
 }
 
-func SetSessionTimeout(timeout time.Duration) {
-  sessionTimeout.Store(int64(timeout))
+func GetNewUuid() string {
+  return uuid.NewString()
 }
 
-func GetSessionTimeout() time.Duration {
-  return time.Duration(sessionTimeout.Load())
-}
-
-func GetSessionTimeoutString() string {
-  d := time.Duration(sessionTimeout.Load())
-  return fmt.Sprintf("%02dh%02dm%02ds%05dms", int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60, int(d.Milliseconds())%1000)
+func (st *session_token) GetCsrfToken() string {
+  return st.csrfToken
 }

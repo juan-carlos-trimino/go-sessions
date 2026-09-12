@@ -35,6 +35,50 @@ structure (where the go.mod file is located) and execute
 $ go get -u "github.com/juan-carlos-trimino/go-sessions@xxxxxxx"
 or
 $ go get -u "github.com/juan-carlos-trimino/go-sessions@v1.x.x"
+
+To delete and reuse a Git tag (version) on both your local machine and GitHub, you must force-delete the tag from both locations
+and then clear Go's proxy cache so it realizes the tag has changed.
+Delete the tag from your local machine.
+$ git tag -d v1.x.x
+
+Create and push the new code to the same tag.
+
+Delete the tag from GytHub remote.
+$ git push origin --delete v1.x.x
+
+Switch to your main project directory to clear the cache.
+Force Go to purge its local cache of downloaded modules.
+$ go clean -modcache
+
+Force Go to bypass the public proxy server, which takes hours to update tags, and pull the fresh tag straight from GitHub source.
+$ GOPROXY=direct go get github.com/juan-carlos-trimino/go-logger@v1.1.4
+
+Tidy up your go.mod references.
+$ go mod
+
+To delete all tags and start from v1.0.0, you need to execute a bulk local deletion, a remote purging command, and force Go to
+reset its historical validation trackers.
+
+Delete all tags from your local machine
+$ git tag -d $(git tag)
+
+Bulk-delete all tags from GitHub remote
+$ git push origin --delete $(git tag)
+
+Create and push your fresh v1.0.0 tag.
+
+Switch to your main project directory to clear the cache.
+Wipe out your local Go module cache.
+$ go clean -modcache
+
+Tell Go to completely ignore the global checksum database tracking for your username.
+$ export GOSUMDB=off
+
+Pull down the newly re-rolled package directly from GitHub source.
+$ GOPROXY=direct go get ://github.com
+
+Tidy your dependencies.
+$ go mod tidy
 ***/
 
 import (
