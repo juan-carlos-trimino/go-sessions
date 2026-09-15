@@ -56,8 +56,8 @@ func SessionExists(sessionToken string) bool {
 
 func CompareUuids(csrf, sessionToken string) bool {
   shr.session_lock.RLock()
+  defer shr.session_lock.RLock()
   st, exists := shr.sessions[sessionToken]
-  shr.session_lock.RUnlock()
   if exists {
     return strings.EqualFold(csrf, st.csrfToken)
   }
@@ -91,7 +91,7 @@ func CreateCookie(sessionToken string) (cookie *http.Cookie) {
     // Expires: sessions[sessionToken].Expiry,
     HttpOnly: true,
     SameSite: http.SameSiteStrictMode,
-    Secure: false,
+    Secure: true,
   }
   return
 }
@@ -124,16 +124,22 @@ func UpdateEntryInSessions(oldSessionToken string) (newSessionToken string, sess
   }
   shr.session_lock.Lock()  //Writer.
   defer shr.session_lock.Unlock()
-  session.userName = shr.sessions[oldSessionToken].userName
+  //Fetch the existing session data and confirm it actually exists.
+  oldSession, exists := shr.sessions[oldSessionToken]
+  if !exists {
+    return "", session_token{}  //Signal failure to the middleware.
+  }
+  session.userName = oldSession.userName  //Transfer the user name to the new session.
   delete(shr.sessions, oldSessionToken)
   shr.sessions[newSessionToken] = session
-  return
+  return newSessionToken, session
 }
 
 func DeleteSession(sessionToken string) (cookie *http.Cookie) {
   shr.session_lock.Lock()  //Writer.
   delete(shr.sessions, sessionToken)
   shr.session_lock.Unlock()
+  //Clear the browser cookie.
   cookie = &http.Cookie{
     Name: "session_token",
     Value: "",
@@ -182,6 +188,46 @@ func (st *session_token) GetExpiry() time.Time {
 func (st *session_token) GetUserName() string {
   return st.userName
 }
+
+
+
+
+// GetSessionByCsrf finds a session token and its username using a CSRF token.
+func GetSessionByCsrf(csrfToken string) (token string, userName string, found bool) {
+	shr.session_lock.RLock()
+	defer shr.session_lock.RUnlock()
+
+	for tokenKey, sessionItem := range shr.sessions {
+		if sessionItem.csrfToken == csrfToken {
+			return tokenKey, sessionItem.userName, true
+		}
+	}
+	return "", "", false
+}
+
+
+
+/***
+StartSessionSweeper kicks off a persistent background routine that deletes expired sessions from memory. Call this once
+inside the main() function when starting the application.
+***/
+func StartSessionSweeper() {
+  //Evaluate and purge the memory map every 30 seconds.
+  ticker := time.NewTicker(30 * time.Second)
+  //Keep looping in the background indefinitely.
+  for range ticker.C {
+    now := time.Now()
+    shr.session_lock.Lock()  //Request a Write Lock to safely mutate the map.
+    for tokenKey, sessionItem := range shr.sessions {
+      //If the session has officially crossed its expiration timeline.
+      if now.After(sessionItem.expiry) {
+        delete(shr.sessions, tokenKey)
+      }
+    }
+    shr.session_lock.Unlock()
+  }
+}
+
 
 
 
