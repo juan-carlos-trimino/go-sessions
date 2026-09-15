@@ -9,7 +9,7 @@ import (
   //go get -u golang.org/x/crypto/bcrypt
   // "golang.org/x/crypto/bcrypt"
   "net/http"
-  // "strings"
+  "strings"
   "sync/atomic"
   "time"
 )
@@ -51,6 +51,16 @@ func SessionExists(sessionToken string) bool {
   shr.session_lock.RLock()  //Readers lock.
   _, exists := shr.sessions[sessionToken]
   shr.session_lock.RUnlock()
+  return exists
+}
+
+func CompareUuids(csrf, sessionToken string) bool {
+  shr.session_lock.RLock()
+  st, exists := shr.sessions[sessionToken]
+  shr.session_lock.RUnlock()
+  if exists {
+    return strings.EqualFold(csrf, st.csrfToken)
+  }
   return exists
 }
 
@@ -171,16 +181,6 @@ func (st *session_token) GetExpiry() time.Time {
 
 func (st *session_token) GetUserName() string {
   return st.userName
-}
-
-func (st *session_token) CompareUuids(csrf, sessionToken string) bool {
-  shr.session_lock.RLock()
-  st, exists := shr.sessions[sessionToken]
-  shr.session_lock.RUnlock()
-  if exists {
-    return strings.EqualFold(csrf, st.csrfToken)
-  }
-  return exists
 }
 
 
