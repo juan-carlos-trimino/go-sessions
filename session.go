@@ -54,17 +54,18 @@ func SessionExists(sessionToken string) bool {
   return exists
 }
 
-func HashSecret(secret string) ([]byte, error) {
+/***
+func hashSecret(secret string) ([]byte, error) {
   hashedSecret, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
   return hashedSecret, err
 }
 
-func CompareHashAndPassword(hashedPassword[]byte, password []byte) (bool, error) {
+func compareHashAndPassword(hashedPassword[]byte, password []byte) (bool, error) {
   err := bcrypt.CompareHashAndPassword(hashedPassword, password)
   return err == nil, err
 }
 
-func CompareUuids(csrf, sessionToken string) bool {
+func compareUuids(csrf, sessionToken string) bool {
   shr.session_lock.RLock()
   st, exists := shr.sessions[sessionToken]
   shr.session_lock.RUnlock()
@@ -73,6 +74,11 @@ func CompareUuids(csrf, sessionToken string) bool {
   }
   return exists
 }
+
+func getNewUuid() string {
+  return uuid.NewString()
+}
+***/
 
 func CreateCookie(sessionToken string) (cookie *http.Cookie) {
   //https://en.wikipedia.org/wiki/HTTP_cookie
@@ -164,10 +170,6 @@ func GetNumberOfSessions() int {
   return len(shr.sessions)
 }
 
-func GetNewUuid() string {
-  return uuid.NewString()
-}
-
 func (st *session_token) GetCsrfToken() string {
   return st.csrfToken
 }
@@ -178,4 +180,15 @@ func (st *session_token) GetExpiry() time.Time {
 
 func (st *session_token) GetUserName() string {
   return st.userName
+}
+
+
+
+func GetSessionTokens() (keys []string) {
+  shr.session_lock.RLock()
+  for key := range shr.sessions {
+    keys = append(keys, key)
+  }
+  shr.session_lock.RUnlock()
+  return kesy
 }
