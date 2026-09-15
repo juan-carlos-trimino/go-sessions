@@ -64,17 +64,8 @@ func compareHashAndPassword(hashedPassword[]byte, password []byte) (bool, error)
   err := bcrypt.CompareHashAndPassword(hashedPassword, password)
   return err == nil, err
 }
-
-func compareUuids(csrf, sessionToken string) bool {
-  shr.session_lock.RLock()
-  st, exists := shr.sessions[sessionToken]
-  shr.session_lock.RUnlock()
-  if exists {
-    return strings.EqualFold(csrf, st.csrfToken)
-  }
-  return exists
-}
-
+***/
+/**
 func getNewUuid() string {
   return uuid.NewString()
 }
@@ -180,6 +171,16 @@ func (st *session_token) GetExpiry() time.Time {
 
 func (st *session_token) GetUserName() string {
   return st.userName
+}
+
+func (st *session_token) CompareUuids(csrf, sessionToken string) bool {
+  shr.session_lock.RLock()
+  st, exists := shr.sessions[sessionToken]
+  shr.session_lock.RUnlock()
+  if exists {
+    return strings.EqualFold(csrf, st.csrfToken)
+  }
+  return exists
 }
 
 
