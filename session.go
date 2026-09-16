@@ -217,14 +217,23 @@ func StartSessionSweeper() {
   //Keep looping in the background indefinitely.
   for range ticker.C {
     now := time.Now()
-    shr.session_lock.Lock()  //Request a Write Lock to safely mutate the map.
+    var expiredTokens []string
+    shr.session_lock.RLock()  //Read lock to scan and find expired tokens.
     for tokenKey, sessionItem := range shr.sessions {
       //If the session has officially crossed its expiration timeline.
       if now.After(sessionItem.expiry) {
-        delete(shr.sessions, tokenKey)
+        expiredTokens = append(expiredTokens, tokenKey)
       }
     }
-    shr.session_lock.Unlock()
+    shr.session_lock.RUnlock()
+    //Write lock but only if there are actual items to delete.
+    if len(expiredTokens) > 0 {
+      shr.session_lock.Lock()
+      for _, token := range expiredTokens {
+        delete(shr.sessions, token)
+      }
+      shr.session_lock.Unlock()
+    }
   }
 }
 
