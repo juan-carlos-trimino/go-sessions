@@ -193,17 +193,17 @@ func (st *session_token) GetUserName() string {
 
 
 // GetSessionByCsrf finds a session token and its username using a CSRF token.
-func GetSessionByCsrf(csrfToken string) (token string, userName string, found bool) {
-	shr.session_lock.RLock()
-	defer shr.session_lock.RUnlock()
+// func GetSessionByCsrf(csrfToken string) (token string, userName string, found bool) {
+// 	shr.session_lock.RLock()
+// 	defer shr.session_lock.RUnlock()
 
-	for tokenKey, sessionItem := range shr.sessions {
-		if sessionItem.csrfToken == csrfToken {
-			return tokenKey, sessionItem.userName, true
-		}
-	}
-	return "", "", false
-}
+// 	for tokenKey, sessionItem := range shr.sessions {
+// 		if sessionItem.csrfToken == csrfToken {
+// 			return tokenKey, sessionItem.userName, true
+// 		}
+// 	}
+// 	return "", "", false
+// }
 
 
 
