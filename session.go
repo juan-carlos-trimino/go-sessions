@@ -2,16 +2,21 @@ package sessions
 
 import (
   "fmt"
+  "github.com/juan-carlos-trimino/go-logger"
   //The option -u instructs 'get' to update the module with dependencies.
   //go get -u github.com/google/uuid
   "github.com/google/uuid"
   //The option -u instructs 'get' to update the module with dependencies.
   //go get -u golang.org/x/crypto/bcrypt
-  // "golang.org/x/crypto/bcrypt"
+  "golang.org/x/crypto/bcrypt"
   "net/http"
   "strings"
   "sync/atomic"
   "time"
+)
+
+const (
+  falseCorrelationId = "-100"
 )
 
 var (
@@ -56,7 +61,7 @@ func SessionExists(sessionToken string) bool {
 
 func CompareUuids(csrf, sessionToken string) bool {
   shr.session_lock.RLock()
-  defer shr.session_lock.RLock()
+  defer shr.session_lock.RUnlock()
   st, exists := shr.sessions[sessionToken]
   if exists {
     return strings.EqualFold(csrf, st.csrfToken)
@@ -64,22 +69,19 @@ func CompareUuids(csrf, sessionToken string) bool {
   return exists
 }
 
-/***
-func hashSecret(secret string) ([]byte, error) {
+func HashSecret(secret string) ([]byte, error) {
   hashedSecret, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
   return hashedSecret, err
 }
 
-func compareHashAndPassword(hashedPassword[]byte, password []byte) (bool, error) {
+func CompareHashAndPassword(hashedPassword []byte, password []byte) (bool, error) {
   err := bcrypt.CompareHashAndPassword(hashedPassword, password)
   return err == nil, err
 }
-***/
-/**
-func getNewUuid() string {
+
+func GetNewUuid() string {
   return uuid.NewString()
 }
-***/
 
 func CreateCookie(sessionToken string) (cookie *http.Cookie) {
   //https://en.wikipedia.org/wiki/HTTP_cookie
@@ -189,52 +191,39 @@ func (st *session_token) GetUserName() string {
   return st.userName
 }
 
-
-
-
-// GetSessionByCsrf finds a session token and its username using a CSRF token.
-// func GetSessionByCsrf(csrfToken string) (token string, userName string, found bool) {
-// 	shr.session_lock.RLock()
-// 	defer shr.session_lock.RUnlock()
-
-// 	for tokenKey, sessionItem := range shr.sessions {
-// 		if sessionItem.csrfToken == csrfToken {
-// 			return tokenKey, sessionItem.userName, true
-// 		}
-// 	}
-// 	return "", "", false
-// }
-
-
-
 /***
 StartSessionSweeper kicks off a persistent background routine that deletes expired sessions from memory. Call this once
 inside the main() function when starting the application.
 ***/
-func StartSessionSweeper() {
-  //Evaluate and purge the memory map every 30 seconds.
-  ticker := time.NewTicker(30 * time.Second)
-  //Keep looping in the background indefinitely.
-  for range ticker.C {
-    now := time.Now()
-    var expiredTokens []string
-    shr.session_lock.RLock()  //Read lock to scan and find expired tokens.
-    for tokenKey, sessionItem := range shr.sessions {
-      //If the session has officially crossed its expiration timeline.
-      if now.After(sessionItem.expiry) {
-        expiredTokens = append(expiredTokens, tokenKey)
+func StartSessionSweeper(timeout time.Duration) {
+  //Fire and forget.
+  go func(timeout time.Duration) {
+    //Evaluate and purge the memory map every timeout value.
+    ticker := time.NewTicker(timeout)
+    //Keep looping in the background indefinitely.
+    for range ticker.C {
+      now := time.Now()
+      var expiredTokens []string
+      shr.session_lock.RLock()  //Read lock to scan and find expired tokens.
+      for tokenKey, sessionItem := range shr.sessions {
+        //If the session has officially crossed its expiration timeline.
+        if now.After(sessionItem.expiry) {
+          expiredTokens = append(expiredTokens, tokenKey)
+        }
+      }
+      shr.session_lock.RUnlock()
+      logger.LogInfo(fmt.Sprintf("Deleting %d session entries from the sessions map.", len(expiredTokens)), falseCorrelationId)
+      //Write lock but only if there are actual items to delete.
+      if len(expiredTokens) > 0 {
+        shr.session_lock.Lock()
+        for _, token := range expiredTokens {
+          delete(shr.sessions, token)
+        }
+        shr.session_lock.Unlock()
       }
     }
-    shr.session_lock.RUnlock()
-    //Write lock but only if there are actual items to delete.
-    if len(expiredTokens) > 0 {
-      shr.session_lock.Lock()
-      for _, token := range expiredTokens {
-        delete(shr.sessions, token)
-      }
-      shr.session_lock.Unlock()
-    }
-  }
+  }(timeout)
+  //StartSessionSweeper finishes instantly, but the goroutine keeps running.
 }
 
 

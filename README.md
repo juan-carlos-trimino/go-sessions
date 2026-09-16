@@ -31,12 +31,14 @@ A file name ***`go.work`*** will be created in your root folder. It will look li
 go 1.26.4
 
 use (
+  ../gp-meta-repo/go-middlewares
+  ../gp-meta-repo/go-sessions
   ./fin-finance/src
-  ./go-middlewares
-  ./go-sessions
 )
 ```
 You can now open your IDE, make a change inside `go-sessions`, and immediately run `go run main.go` inside `fin-finance/src`. Go will use your live local changes instantly. When you are finally ready for production, you tag and push your packages all at once.
+
+Finally, you may want to add `go.work` to your `.gitignore` file so it doesn't get push to git.
 
 # Debugging
 
