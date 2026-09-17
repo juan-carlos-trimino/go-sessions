@@ -65,26 +65,27 @@ You can explicitly force your `main module` to look at your local file system fo
 
 Finally, remember to remove this line before pushing your `go.mod` file to production.
 
-# Usage
+# Tags
+## Create tags
 Clone the repo.
 ```
 git clone https://github.com/juan-carlos-trimino/go-sessions.git
 ```
 
-Initialize Go.
+Change directory.
 ```
 cd go-sessions
 ```
 
-Execute `go mod init github.com/{GitHub-Username}/{Repo-Name}`.
+If a `go.mod` file already exists, **skip** this step; otherwise, execute `go mod init github.com/{GitHub-Username}/{Repo-Name}`. If you run `go mod init` on an existing Go package, the command will fail and throw an error because the module has already been initialized by whoever created it.
 ```
 go mod init github.com/juan-carlos-trimino/go-sessions
 ```
 
-Create the file `main.go` and add the code to it. Then commit and push the code.
+Modify your Go files and then commit and push the code.
 ```
 git add .
-git commit -m "initial commit."
+git commit -m "your comments here."
 git push origin main
 ```
 
@@ -106,21 +107,20 @@ import (
 )
 ```
 
-To upgrade/downgrade the version of the package, move to the root of the module's directory structure (where the `go.mod` file is located) and execute (`go get -u "{package-name}@{git-commit-hash}"` or `go get -u "{package-name}@{version}"`).
+To upgrade/downgrade the version of the package, move to the root of the module's directory (where the `go.mod` file is located) and execute (`go get -u "{package-name}@{git-commit-hash}"` or `go get -u "{package-name}@{version}"`).
 ```
 go get -u "github.com/juan-carlos-trimino/go-sessions@xxxxxxx"
 
 # or
-
 go get -u "github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.x.x"
 ```
 
 ## Delete and reuse a Git tag
-In Git, ***tags belong to the entire repository, not to individual packages***. Git does not track folders or packages independently when it comes to versioning; it only tracks the history of the entire project tree as single commits. Therefore, to prevent tags from overwriting each other, the standard convention in Go and modern development toolchains is to prefix the tag with the package's folder path.
+In Git, ***tags belong to the entire repository, not to individual packages***. Git does not track folders or packages independently when it comes to versioning; it only tracks the history of the entire project tree as single commits. Therefore, to prevent tags from overwriting each other, the standard convention in Go is to prefix the tag with the package's folder path.
 
 With that said, to delete and reuse a Git tag (version) on both **your local machine and remote repository (e.g., GitHub or GitLab)**, you must force-delete the tag from **both locations** and then clear Go's proxy cache so it realizes the tag has changed.
 
-Delete the tag from your local machine, but ONLY the module sessions version go-sessions/v1.1.1.
+Delete the tag from your local machine, but ONLY the module `go-sessions` with version `go-sessions/v1.1.1`.
 ```
 git tag -d go-sessions/v1.1.1
 ```
@@ -144,7 +144,7 @@ If you want to tag a specific older commit instead of your current HEAD, just ad
 git tag go-sessions/v1.1.1 xxxxxxx
 ```
 
-From your main project directory, you must clear Go's local download cache on your machine so it deletes the old version of the tag. This wipes out all downloaded dependencies locally, forcing Go to redownload them cleanly from the internet the next time you build or run `go get`.
+From your main project directory, you must clear Go's local download cache on your machine so it deletes the old version of the tag. The command below wipes out all downloaded dependencies locally, forcing Go to redownload them cleanly from the internet the next time you build or run `go get`.
 ```
 go clean -modcache
 ```
@@ -158,12 +158,11 @@ If a coworker already pulled down the old `go-sessions/v1.1.1` tag, their local 
 If you have teammates, your teammates must force-update their local tags by running:
 ```
 git fetch --tags --force
-
 go clean -modcache
 ```
 ---
 
-Move to the main project directory that *uses* your go-sessions package. Because Go utilizes a global proxy (`proxy.golang.org`) by default, the proxy might cache your old tag for up to 24 hours. To bypass the proxy and force Go to pull the absolute newest tag directly from your repository, use the ***GOPROXY=direct*** override flag when fetching it:
+Move to the main project directory that *uses* your `go-sessions` package. Because Go utilizes the Google's public caching proxy servre (`proxy.golang.org`) by default, the proxy might cache your old tag for up to 24 hours. To bypass the proxy and force Go to pull the absolute newest tag directly from your repository, use the ***GOPROXY=direct*** override flag when fetching it:
 ```
 GOPROXY=direct go get github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.1.1
 ```
@@ -173,11 +172,10 @@ Tidy up your go.mod references.
 go mod
 ```
 
-rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
-
+## Delete all tags
 To delete all tags and start from v1.0.0, you need to execute a bulk local deletion, a remote purging command, and force Go to reset its historical validation trackers.
 
-Delete all tags starting with go-sessions/ from your local machine (Linux).
+Delete all tags starting with `go-sessions/` from your local machine (Linux).
 ```
 git tag -l "go-sessions/*" | xargs git tag -d
 ```
@@ -195,26 +193,27 @@ git tag go-sessions/v1.0.0
 git push origin go-sessions/v1.0.0
 ```
 
-Just like before, force Go to delete the old tags in its cache:
+Just like before, force Go to delete the old tags in its cache.
 ```
 go clean -modcache
 ```
 
-
-
-If you get a ***checksum error***, you can temporarily bypass it for your specific private or internal module using GONOSUMDB rather than turning the security feature completely off for your entire computer.
+Pull down the newly re-rolled package directly from the repository. If you get a ***checksum error***, you will need to use one of the two following commands.
 ```
-GOPROXY=direct GONOSUMDB=github.com/juan-carlos-trimino* go get github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.0.0
+GOPROXY=direct go get github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.0.0
 ```
 
-If you get a ***checksum error***, you should try the command above. This command tells Go to completely ignore the global checksum database tracking for your username. ***Use with care***.
+---
+***Warning***
+If you get a ***checksum error***, you should try the command below. This command tells Go to completely ignore the global checksum database tracking for your username. ***Use with care***.
 ```
 export GOSUMDB=off
 ```
+---
 
-Pull down the newly re-rolled package directly from `GitHub`.
+If you get a ***checksum error***, you can temporarily bypass it for your specific private or internal module using GONOSUMDB rather than turning the security feature completely off for your entire computer.
 ```
-GOPROXY=direct go get github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.0.0
+GOPROXY=direct GONOSUMDB=github.com/juan-carlos-trimino/* go get github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.0.0
 ```
 
 Tidy your dependencies.

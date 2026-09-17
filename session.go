@@ -11,6 +11,7 @@ import (
   "golang.org/x/crypto/bcrypt"
   "net/http"
   "strings"
+  "sync"
   "sync/atomic"
   "time"
 )
@@ -22,16 +23,37 @@ const (
 var (
   //Keep the variables unexported (lowercase) so they can't be modified directly.
   sessionTimeout atomic.Int64
-)
+  //Grouping together three related variables in a single package-level variable, protect.
+  shr = struct{  //Unnamed struct.
+    /***
+    It allows read-only operations to proceed in parallel with each other, but write operations to have fully exclusive access; this
+    lock is called a multiple readers, single writer lock.
 
-func init() {
-  sessionTimeout.Store(int64(10 * time.Minute))
-}
+    It's only profitable to use an RWMutex when most of the goroutines that acquire the lock are readers, and the lock is under
+    contention, that is, goroutines routinely have to wait to acquire it. An RWMutex requires more complex internal bookkeeping,
+    making it slower than a regular mutex for uncontended locks.
+    ***/
+    session_lock sync.RWMutex  //Lock for the sessions map.
+    //Store the session information for each user in memory.
+    sessions map[string]session_token  //key: sessionToken, value: session
+    //Store the username and password for each user.
+    // users map[string][]byte //key: username, value: password
+    // user_pwd sync.RWMutex  //Protect the map; embedded field.
+    // file_user_pwd sync.Mutex  //Protect the file.
+  }{
+    sessions: make(map[string]session_token, 16),  //key: sessionToken, value: session
+    //users: make(map[string][]byte, 16),
+  }
+)
 
 type session_token struct{
   userName string
   expiry time.Time  //Enforce periodic session termination as a way to prevent session hijacking.
   csrfToken string
+}
+
+func init() {
+  sessionTimeout.Store(int64(10 * time.Minute))
 }
 
 //Determine if a session has expired.
