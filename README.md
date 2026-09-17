@@ -15,9 +15,9 @@ Assume your directory structure looks like this:
 ```
 1. Open your terminal and navigate to your top-level project root (`~/repos/fin-meta-repo/`).
 2. Initialize a workspace by running:<br>
-   ```
-   go work init
-   ```
+    ```
+    go work init
+    ```
 
 3. Add your main app and local packages to the worspace:<br>
    ```
@@ -48,19 +48,19 @@ To debug code inside a dependency module (`go-sessions`) while running your `mai
 You can explicitly force your `main module` to look at your local file system for `go-sessions`. The following steps will guide you:
 1. Edit the main `go.mod`.
 2. Add a *replace directive* at the bottom of your `go.mod` file pointing to the relative or absolute path of your local dependency:
-   ```
-   module finance
+    ```
+    module finance
 
-   go 1.26.4
+    go 1.26.4
 
-   require (
-     github.com/juan-carlos-trimino/go-sessions go-sessions/v1.x.x
-   )
+    require (
+      github.com/juan-carlos-trimino/go-sessions go-sessions/v1.x.x
+    )
 
-   //Force Go to use your local copy for compiling and debugging.
-   replace github.com/juan-carlos-trimino/go-sessions => ../../../gp-meta-repo/go-sessions/
-  ```
-3. Run Delve or your IDE Debugger.
+    //Force Go to use your local copy for compiling and debugging.
+    replace github.com/juan-carlos-trimino/go-sessions => ../../../gp-meta-repo/go-sessions/
+    ```
+3. Run Delve or your IDE Debugger.<br>
    Run your debugger from the main module; you can now open files from `../../../gp-meta-repo/go-sessions/`, insert breakpoints, and step into them. The folder path specified in your replace directive ***must exactly match*** the folder path you have open in your IDE.
 
 Finally, remember to remove this line before pushing your `go.mod` file to production.
