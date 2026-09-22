@@ -1,15 +1,20 @@
 package sessions
 
 import (
+  "context"
+  "errors"
   "fmt"
   "github.com/juan-carlos-trimino/go-logger"
   //The option -u instructs 'get' to update the module with dependencies.
   //go get -u github.com/google/uuid
   "github.com/google/uuid"
+  //go get github.com/redis/go-redis/v9
+  "github.com/redis/go-redis/v9"
   //The option -u instructs 'get' to update the module with dependencies.
   //go get -u golang.org/x/crypto/bcrypt
   "golang.org/x/crypto/bcrypt"
   "net/http"
+  "strconv"
   "strings"
   "sync"
   "sync/atomic"
@@ -20,9 +25,27 @@ const (
   falseCorrelationId = "-100"
 )
 
+//Define a read-only structure to hold the synchronized configuration.
+type SessionTimeoutConfig struct{
+  Timeout time.Duration
+  /***
+  To avoid overloading your Redis instance and the client's browser with cookie updates on every single click, you should implement
+  a "lazy refresh" (or debounced refresh) strategy.
+
+  Instead of updating the session every single time, you check how much time has passed since the session started or when it was
+  last updated. You only issue the updates if a specific threshold has passed -- most commonly when the session is halfway to
+  expiring.
+  ***/
+  Threshold time.Duration
+}
+
+//Keep the variables unexported (lowercase) so they can't be modified directly.
 var (
-  //Keep the variables unexported (lowercase) so they can't be modified directly.
-  sessionTimeout atomic.Int64
+
+  sessionTimeout int64 //jct
+
+  redis_db *redis.Client
+  sessionConfig atomic.Value  //Initialize a single atomic.Value.
   //Grouping together three related variables in a single package-level variable, protect.
   shr = struct{  //Unnamed struct.
     /***
@@ -53,7 +76,8 @@ type session_token struct{
 }
 
 func init() {
-  sessionTimeout.Store(int64(10 * time.Minute))
+  //Initialize with default values so .Load() never returns nil.
+  SetSessionTimeout(10 * time.Minute)
 }
 
 //Determine if a session has expired.
@@ -106,16 +130,19 @@ func GetNewUuid() string {
 }
 
 func CreateCookie(sessionToken string) (cookie *http.Cookie) {
-  //https://en.wikipedia.org/wiki/HTTP_cookie
-  //https://httpwg.org/specs/rfc6265.html
+  /***
+  https://en.wikipedia.org/wiki/HTTP_cookie
+  https://httpwg.org/specs/rfc6265.html
+
+  When a browser sends a cookie back to the Go server in a request header, it only sends the name and the value (e.g., Cookie: session_token=abc123xyz). The browser strips out the Expires, Path, and Domain fields before sending it over the network.
+  ***/
   cookie = &http.Cookie{
     Name: "session_token",
     Value: sessionToken,
-    Path: "/",
-    // Expires: sessions[sessionToken].Expiry,
-    HttpOnly: true,
+    Path: "/",  //Ensure path matches original cookie.
+    HttpOnly: true,  //Security: prevent XSS access.
     SameSite: http.SameSiteStrictMode,
-    Secure: true,
+    Secure: true,  //Security: HTTPS only.
   }
   return
 }
@@ -131,7 +158,7 @@ func AddEntryToSessions(userName string) (sessionToken string, session session_t
   sessionToken = uuid.NewString()
   session = session_token{
     userName: userName,
-    expiry: time.Now().Add(time.Duration(sessionTimeout.Load())),
+    expiry: time.Now().Add(time.Duration(sessionTimeout)),
     csrfToken: uuid.NewString(),
   }
   shr.session_lock.Lock()  //Writer.
@@ -143,7 +170,7 @@ func AddEntryToSessions(userName string) (sessionToken string, session session_t
 func UpdateEntryInSessions(oldSessionToken string) (newSessionToken string, session session_token) {
   newSessionToken = uuid.NewString()
   session = session_token{
-    expiry: time.Now().Add(time.Duration(sessionTimeout.Load())),
+    expiry: time.Now().Add(time.Duration(sessionTimeout)),
     csrfToken: uuid.NewString(),
   }
   shr.session_lock.Lock()  //Writer.
@@ -176,16 +203,17 @@ func DeleteSession(sessionToken string) (cookie *http.Cookie) {
   return
 }
 
-func SetSessionTimeout(timeout time.Duration) {
-  sessionTimeout.Store(int64(timeout))
-}
+// func SetSessionTimeout1(timeout time.Duration) {
+//   sessionTimeout.Store(int64(timeout))
+//   refreshThreshold.Store(sessionTimeout.Load() >> 1)  //Shift right by 1 to divide by 2.
+// }
 
-func GetSessionTimeout() time.Duration {
-  return time.Duration(sessionTimeout.Load())
-}
+// func GetSessionTimeout() time.Duration {
+//   return time.Duration(sessionTimeout.Load())
+// }
 
 func GetSessionTimeoutString() string {
-  d := time.Duration(sessionTimeout.Load())
+  d := time.Duration(sessionTimeout)
   return fmt.Sprintf("%02dh%02dm%02ds%05dms", int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60, int(d.Milliseconds())%1000)
 }
 
@@ -259,3 +287,126 @@ func GetSessionTokens() (keys []string) {
   shr.session_lock.RUnlock()
   return keys
 }
+
+//------------------------------
+
+func SetSessionTimeout(timeout time.Duration) {
+  //Create a brand-new, isolated struct instance.
+  newCfg := &SessionTimeoutConfig{
+    Timeout: timeout,
+    Threshold: timeout >> 1,  //Shift right by 1 to divide by 2.
+  }
+  //Atomically swap the pointer. This happens in a single CPU instruction.
+  sessionConfig.Store(newCfg)
+}
+
+//Read safely from anywhere without locks.
+func GetSessionConfig() *SessionTimeoutConfig {
+  return sessionConfig.Load().(*SessionTimeoutConfig)
+}
+
+//make sure the client is started once; use singlenton????????????????????????????
+func StartRedisServer(ctx context.Context, options *redis.Options) error {
+  //Connect to the Redis.
+  redis_db = redis.NewClient(options)
+  //Ping the Redis Server to check connection.
+  _, err := redis_db.Ping(ctx).Result()
+  return err
+}
+
+func SaveRedis(ctx context.Context, userData string) (*http.Cookie, error) {
+  timeCfg := GetSessionConfig()
+  sessionId := GetNewUuid()
+  err := redis_db.Set(ctx, sessionId, userData, timeCfg.Timeout).Err()
+  if err != nil {
+    return nil, err
+  }
+  sessionExpiresAt := time.Now().Add(timeCfg.Timeout)
+  cookieValue := fmt.Sprintf("%s|%d", sessionId, sessionExpiresAt.Unix())
+  cookie := CreateCookie(cookieValue)
+  cookie.MaxAge = int(timeCfg.Timeout.Seconds())
+  cookie.Expires = sessionExpiresAt
+  return cookie, nil
+}
+
+func ValidateSessionRedis(req *http.Request) (string, *http.Cookie, error) {
+  //Extract cookie (assuming it contains: "uuid|timestamp").
+  cookie, err := req.Cookie("session_token")
+  if err != nil {
+    return "", nil, err
+  }
+  parts := strings.Split(cookie.Value, "|")
+  if len(parts) != 2 {
+    return "", nil, errors.New("Invalid cookie format.")
+  }
+  sessionId := parts[0]
+  expiryUnix, err := strconv.ParseInt(parts[1], 10 /*base*/, 64 /*int64*/)
+  if err != nil {
+    return "", nil, errors.New("Invalid expiry format.")
+  }
+  //Convert timestamp and compute how much time is left.
+  expiresAt := time.Unix(expiryUnix, 0)
+  //Calculate remaining lifetime left on this cookie.
+  timeLeft := time.Until(expiresAt)
+  timeCfg := GetSessionConfig()
+  /***
+  To implement an "automatic rolling session refresh," you check how much time has passed since the session started. If the time
+  remaining falls below your Threshold, you generate a new cookie and reset the TTL in Redis.
+
+  Because your cookie value contains the absolute expiration time (sessionId|expiresAtUnix), you can easily figure out exactly
+  how much time is left without hitting Redis first.
+  ***/
+  if timeLeft < timeCfg.Threshold {
+    //Update backend countdown clock.
+    //If the user is active, reset the countdown clock back to sessionTimeout.
+    err := redis_db.Expire(req.Context(), sessionId, timeCfg.Timeout)
+    if err != nil {
+      // If session missing or Redis down, fail safely
+     // http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+      return "", nil, err.Err()
+    }
+    //Update browser cookie with a fresh future timestamp.
+    sessionExpiresAt := time.Now().Add(timeCfg.Timeout)
+    cookieValue := fmt.Sprintf("%s|%d", sessionId, sessionExpiresAt.Unix())
+    cookie = CreateCookie(cookieValue)
+    //Update the Cookie expiration to match Redis.
+    cookie.MaxAge = int(timeCfg.Timeout.Seconds())
+    cookie.Expires = sessionExpiresAt
+    return "", cookie, nil
+  }
+  return "", cookie, nil
+}
+
+func LogoutRedis(req *http.Request) (string, *http.Cookie, error) {
+  cookie, err := req.Cookie("session_token")
+  //Continue with or without error to ensure the client-side cookie is deleted.
+  if err == nil {
+    err = redis_db.Del(req.Context(), cookie.Value).Err()
+  }
+  cookie = CreateCookie("")
+  /***
+  Send back a cookie with MaxAge = -1 and an expired timestamp. This instructs the browser to immediately delete
+  the cookie from disk.
+  ***/
+  cookie.MaxAge = -1  //Instruct the browser to delete immediately.
+  cookie.Expires = time.Unix(0, 0)  //January 1, 1970.
+  return "", cookie, err
+}
+
+func GetUserDataFromRedis(ctx context.Context, sessionId string) string {
+  userData, err := redis_db.Get(ctx, sessionId).Result()
+  if err != nil {
+    //Check if the key simply doesn't exist in Redis.
+    if errors.Is(err, redis.Nil) {
+      //User not found.
+      return "user not found"
+    } else {
+      return "error: user not found"
+    }
+  }
+  return userData
+}
+
+
+
+//make sure the client is started once; use singlenton
