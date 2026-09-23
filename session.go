@@ -44,7 +44,7 @@ var (
 
   sessionTimeout int64 //jct
 
-  redis_db *redis.Client
+  Redis_db *redis.Client
   sessionConfig atomic.Value  //Initialize a single atomic.Value.
   //Grouping together three related variables in a single package-level variable, protect.
   shr = struct{  //Unnamed struct.
@@ -308,16 +308,16 @@ func GetSessionConfig() *SessionTimeoutConfig {
 //make sure the client is started once; use singlenton????????????????????????????
 func StartRedisServer(ctx context.Context, options *redis.Options) error {
   //Connect to the Redis.
-  redis_db = redis.NewClient(options)
+  Redis_db = redis.NewClient(options)
   //Ping the Redis Server to check connection.
-  _, err := redis_db.Ping(ctx).Result()
+  _, err := Redis_db.Ping(ctx).Result()
   return err
 }
 
 func SaveRedis(ctx context.Context, userData string) (*http.Cookie, error) {
   timeCfg := GetSessionConfig()
   sessionId := GetNewUuid()
-  err := redis_db.Set(ctx, sessionId, userData, timeCfg.Timeout).Err()
+  err := Redis_db.Set(ctx, sessionId, userData, timeCfg.Timeout).Err()
   if err != nil {
     return nil, err
   }
@@ -359,7 +359,7 @@ func ValidateSessionRedis(req *http.Request) (string, *http.Cookie, error) {
   if timeLeft < timeCfg.Threshold {
     //Update backend countdown clock.
     //If the user is active, reset the countdown clock back to sessionTimeout.
-    err := redis_db.Expire(req.Context(), sessionId, timeCfg.Timeout)
+    err := Redis_db.Expire(req.Context(), sessionId, timeCfg.Timeout)
     if err != nil {
       // If session missing or Redis down, fail safely
      // http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -381,7 +381,7 @@ func LogoutRedis(req *http.Request) (string, *http.Cookie, error) {
   cookie, err := req.Cookie("session_token")
   //Continue with or without error to ensure the client-side cookie is deleted.
   if err == nil {
-    err = redis_db.Del(req.Context(), cookie.Value).Err()
+    err = Redis_db.Del(req.Context(), cookie.Value).Err()
   }
   cookie = CreateCookie("")
   /***
@@ -394,7 +394,7 @@ func LogoutRedis(req *http.Request) (string, *http.Cookie, error) {
 }
 
 func GetUserDataFromRedis(ctx context.Context, sessionId string) string {
-  userData, err := redis_db.Get(ctx, sessionId).Result()
+  userData, err := Redis_db.Get(ctx, sessionId).Result()
   if err != nil {
     //Check if the key simply doesn't exist in Redis.
     if errors.Is(err, redis.Nil) {
