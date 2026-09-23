@@ -393,18 +393,19 @@ func LogoutRedis(req *http.Request) (string, *http.Cookie, error) {
   return "", cookie, err
 }
 
-func GetUserDataFromRedis(ctx context.Context, sessionId string) string {
+func GetRedis(ctx context.Context, sessionId string) (string, error) {
   userData, err := Redis_db.Get(ctx, sessionId).Result()
   if err != nil {
     //Check if the key simply doesn't exist in Redis.
     if errors.Is(err, redis.Nil) {
-      //User not found.
-      return "user not found"
+      logger.LogInfo("GetRedis: The key is not present in the database.", falseCorrelationId)
+      return "", err  //User not found.
     } else {
-      return "error: user not found"
+      logger.LogInfo("GetRedis: Underlying network error.", falseCorrelationId)
+      return "", err  //Redis Error.
     }
   }
-  return userData
+  return userData, nil  //Key exists in Redis and the session is active.
 }
 
 
