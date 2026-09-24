@@ -43,7 +43,7 @@ var (
 
   sessionTimeout int64 //jct
 
-  Redis_db *redis.Client
+  redis_db *redis.Client
   sessionConfig atomic.Value  //Initialize a single atomic.Value.
   //Grouping together three related variables in a single package-level variable, protect.
   shr = struct{  //Unnamed struct.
@@ -304,16 +304,16 @@ func GetSessionTimeoutConfig() *SessionTimeoutConfig {
 //make sure the client is started once; use singlenton????????????????????????????
 func StartRedisServer(ctx context.Context, options *redis.Options) error {
   //Connect to the Redis.
-  Redis_db = redis.NewClient(options)
+  redis_db = redis.NewClient(options)
   //Ping the Redis Server to check connection.
-  _, err := Redis_db.Ping(ctx).Result()
+  _, err := redis_db.Ping(ctx).Result()
   return err
 }
 
 func SaveRedis(ctx context.Context, userData string) (*http.Cookie, error) {
   timeCfg := GetSessionTimeoutConfig()
   sessionId := GetNewUuid()
-  err := Redis_db.Set(ctx, sessionId, userData, timeCfg.Timeout).Err()
+  err := redis_db.Set(ctx, sessionId, userData, timeCfg.Timeout).Err()
   if err != nil {
     return nil, err
   }
@@ -376,11 +376,11 @@ func ValidateSessionRedis(req *http.Request) (string, *http.Cookie, error) {
 ***/
 
 func DelRedis(ctx context.Context, sessionId string) (int64, error) {
-  return Redis_db.Del(ctx, sessionId).Result()
+  return redis_db.Del(ctx, sessionId).Result()
 }
 
 func GetRedis(ctx context.Context, sessionId string) (string, error) {
-  userData, err := Redis_db.Get(ctx, sessionId).Result()
+  userData, err := redis_db.Get(ctx, sessionId).Result()
   if err != nil {
     //Check if the key simply doesn't exist in Redis.
     if errors.Is(err, redis.Nil) {
@@ -395,8 +395,11 @@ func GetRedis(ctx context.Context, sessionId string) (string, error) {
 }
 
 func DbSizeRedis(ctx context.Context) (int64, error) {
-  return Redis_db.DBSize(ctx).Result()
+  return redis_db.DBSize(ctx).Result()
 }
 
+func ExpireRedis(ctx context.Context, sessionId string, timeout time.Duration) (bool, error) {
+  return redis_db.Expire(ctx, sessionId, timeout).Result()
+}
 
 //make sure the client is started once; use singlenton
