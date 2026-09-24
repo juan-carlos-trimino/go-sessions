@@ -325,56 +325,6 @@ func SaveRedis(ctx context.Context, userData string) (*http.Cookie, error) {
   return cookie, nil
 }
 
-/***
-func ValidateSessionRedis(req *http.Request) (string, *http.Cookie, error) {
-  //Extract cookie (assuming it contains: "uuid|timestamp").
-  cookie, err := req.Cookie("session_token")
-  if err != nil {
-    return "", nil, err
-  }
-  parts := strings.Split(cookie.Value, "|")
-  if len(parts) != 2 {
-    return "", nil, errors.New("Invalid cookie format.")
-  }
-  sessionId := parts[0]
-  expiryUnix, err := strconv.ParseInt(parts[1], 10 *base*, 64 *int64*)
-  if err != nil {
-    return "", nil, errors.New("Invalid expiry format.")
-  }
-  //Convert timestamp and compute how much time is left.
-  expiresAt := time.Unix(expiryUnix, 0)
-  //Calculate remaining lifetime left on this cookie.
-  timeLeft := time.Until(expiresAt)
-  timeCfg := GetSessionConfig()
-  // ***
-  // To implement an "automatic rolling session refresh," you check how much time has passed since the session started. If the time
-  // remaining falls below your Threshold, you generate a new cookie and reset the TTL in Redis.
-
-  // Because your cookie value contains the absolute expiration time (sessionId|expiresAtUnix), you can easily figure out exactly
-  // how much time is left without hitting Redis first.
-  // ***
-  if timeLeft < timeCfg.Threshold {
-    //Update backend countdown clock.
-    //If the user is active, reset the countdown clock back to sessionTimeout.
-    err := Redis_db.Expire(req.Context(), sessionId, timeCfg.Timeout)
-    if err != nil {
-      // If session missing or Redis down, fail safely
-     // http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-      return "", nil, err.Err()
-    }
-    //Update browser cookie with a fresh future timestamp.
-    sessionExpiresAt := time.Now().Add(timeCfg.Timeout)
-    cookieValue := fmt.Sprintf("%s|%d", sessionId, sessionExpiresAt.Unix())
-    cookie = CreateCookie(cookieValue)
-    //Update the Cookie expiration to match Redis.
-    cookie.MaxAge = int(timeCfg.Timeout.Seconds())
-    cookie.Expires = sessionExpiresAt
-    return "", cookie, nil
-  }
-  return "", cookie, nil
-}
-***/
-
 func DelRedis(ctx context.Context, sessionId string) (int64, error) {
   return redis_db.Del(ctx, sessionId).Result()
 }
