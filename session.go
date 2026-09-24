@@ -14,7 +14,6 @@ import (
   //go get -u golang.org/x/crypto/bcrypt
   "golang.org/x/crypto/bcrypt"
   "net/http"
-  "strconv"
   "strings"
   "sync"
   "sync/atomic"
@@ -139,7 +138,11 @@ func CreateCookie(sessionToken string) (cookie *http.Cookie) {
   cookie = &http.Cookie{
     Name: "session_token",
     Value: sessionToken,
-    Path: "/",  //Ensure path matches original cookie.
+    /***
+    Whenever you create or delete a cookie, always explicitly set Path: "/". If you omit the path, the browser defaults to the
+    current URL directory, which instantly creates duplicate cookie risks when users navigate your site.
+    ***/
+    Path: "/",  //Always lock down the Path.
     HttpOnly: true,  //Security: prevent XSS access.
     SameSite: http.SameSiteStrictMode,
     Secure: true,  //Security: HTTPS only.
@@ -201,20 +204,6 @@ func DeleteSession(sessionToken string) (cookie *http.Cookie) {
     Secure: false,
   }
   return
-}
-
-// func SetSessionTimeout1(timeout time.Duration) {
-//   sessionTimeout.Store(int64(timeout))
-//   refreshThreshold.Store(sessionTimeout.Load() >> 1)  //Shift right by 1 to divide by 2.
-// }
-
-// func GetSessionTimeout() time.Duration {
-//   return time.Duration(sessionTimeout.Load())
-// }
-
-func GetSessionTimeoutString() string {
-  d := time.Duration(sessionTimeout)
-  return fmt.Sprintf("%02dh%02dm%02ds%05dms", int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60, int(d.Milliseconds())%1000)
 }
 
 func GetUserName(sessionToken string) string {
@@ -290,6 +279,13 @@ func GetSessionTokens() (keys []string) {
 
 //------------------------------
 
+
+func GetSessionTimeoutString() string {
+  tc := GetSessionTimeoutConfig()
+  return fmt.Sprintf("%02dh%02dm%02ds%05dms", int(tc.Timeout.Hours()), int(tc.Timeout.Minutes())%60,
+    int(tc.Timeout.Seconds())%60, int(tc.Timeout.Milliseconds())%1000)
+}
+
 func SetSessionTimeout(timeout time.Duration) {
   //Create a brand-new, isolated struct instance.
   newCfg := &SessionTimeoutConfig{
@@ -301,7 +297,7 @@ func SetSessionTimeout(timeout time.Duration) {
 }
 
 //Read safely from anywhere without locks.
-func GetSessionConfig() *SessionTimeoutConfig {
+func GetSessionTimeoutConfig() *SessionTimeoutConfig {
   return sessionConfig.Load().(*SessionTimeoutConfig)
 }
 
@@ -315,7 +311,7 @@ func StartRedisServer(ctx context.Context, options *redis.Options) error {
 }
 
 func SaveRedis(ctx context.Context, userData string) (*http.Cookie, error) {
-  timeCfg := GetSessionConfig()
+  timeCfg := GetSessionTimeoutConfig()
   sessionId := GetNewUuid()
   err := Redis_db.Set(ctx, sessionId, userData, timeCfg.Timeout).Err()
   if err != nil {
@@ -329,6 +325,7 @@ func SaveRedis(ctx context.Context, userData string) (*http.Cookie, error) {
   return cookie, nil
 }
 
+/***
 func ValidateSessionRedis(req *http.Request) (string, *http.Cookie, error) {
   //Extract cookie (assuming it contains: "uuid|timestamp").
   cookie, err := req.Cookie("session_token")
@@ -340,7 +337,7 @@ func ValidateSessionRedis(req *http.Request) (string, *http.Cookie, error) {
     return "", nil, errors.New("Invalid cookie format.")
   }
   sessionId := parts[0]
-  expiryUnix, err := strconv.ParseInt(parts[1], 10 /*base*/, 64 /*int64*/)
+  expiryUnix, err := strconv.ParseInt(parts[1], 10 *base*, 64 *int64*)
   if err != nil {
     return "", nil, errors.New("Invalid expiry format.")
   }
@@ -349,13 +346,13 @@ func ValidateSessionRedis(req *http.Request) (string, *http.Cookie, error) {
   //Calculate remaining lifetime left on this cookie.
   timeLeft := time.Until(expiresAt)
   timeCfg := GetSessionConfig()
-  /***
-  To implement an "automatic rolling session refresh," you check how much time has passed since the session started. If the time
-  remaining falls below your Threshold, you generate a new cookie and reset the TTL in Redis.
+  // ***
+  // To implement an "automatic rolling session refresh," you check how much time has passed since the session started. If the time
+  // remaining falls below your Threshold, you generate a new cookie and reset the TTL in Redis.
 
-  Because your cookie value contains the absolute expiration time (sessionId|expiresAtUnix), you can easily figure out exactly
-  how much time is left without hitting Redis first.
-  ***/
+  // Because your cookie value contains the absolute expiration time (sessionId|expiresAtUnix), you can easily figure out exactly
+  // how much time is left without hitting Redis first.
+  // ***
   if timeLeft < timeCfg.Threshold {
     //Update backend countdown clock.
     //If the user is active, reset the countdown clock back to sessionTimeout.
@@ -376,21 +373,10 @@ func ValidateSessionRedis(req *http.Request) (string, *http.Cookie, error) {
   }
   return "", cookie, nil
 }
+***/
 
-func LogoutRedis(req *http.Request) (string, *http.Cookie, error) {
-  cookie, err := req.Cookie("session_token")
-  //Continue with or without error to ensure the client-side cookie is deleted.
-  if err == nil {
-    err = Redis_db.Del(req.Context(), cookie.Value).Err()
-  }
-  cookie = CreateCookie("")
-  /***
-  Send back a cookie with MaxAge = -1 and an expired timestamp. This instructs the browser to immediately delete
-  the cookie from disk.
-  ***/
-  cookie.MaxAge = -1  //Instruct the browser to delete immediately.
-  cookie.Expires = time.Unix(0, 0)  //January 1, 1970.
-  return "", cookie, err
+func DelRedis(ctx context.Context, sessionId string) (int64, error) {
+  return Redis_db.Del(ctx, sessionId).Result()
 }
 
 func GetRedis(ctx context.Context, sessionId string) (string, error) {
@@ -408,6 +394,9 @@ func GetRedis(ctx context.Context, sessionId string) (string, error) {
   return userData, nil  //Key exists in Redis and the session is active.
 }
 
+func DbSizeRedis(ctx context.Context) (int64, error) {
+  return Redis_db.DBSize(ctx).Result()
+}
 
 
 //make sure the client is started once; use singlenton
