@@ -3,28 +3,22 @@ package sessions
 import (
   "context"
   "crypto/rand"
+  "crypto/hmac"
+  "crypto/sha256"
   "encoding/base64"
   "encoding/json"
   "errors"
   "fmt"
-  "github.com/juan-carlos-trimino/go-logger"
   //The option -u instructs 'get' to update the module with dependencies.
-  //go get -u github.com/google/uuid
-  "github.com/google/uuid"
+  //go get -u github.com/redis/go-redis/v9
   //go get github.com/redis/go-redis/v9
   "github.com/redis/go-redis/v9"
-  //The option -u instructs 'get' to update the module with dependencies.
-  //go get -u golang.org/x/crypto/bcrypt
-  "golang.org/x/crypto/bcrypt"
   "net/http"
+  "strconv"
   "strings"
   "sync"
   "sync/atomic"
   "time"
-)
-
-const (
-  falseCorrelationId = "-100"
 )
 
 //Define a read-only structure to hold the synchronized configuration.
@@ -49,99 +43,41 @@ type SessionInfo struct{
 
 //Keep the variables unexported (lowercase) so they can't be modified directly.
 var (
-
-  sessionTimeout int64 //jct
-
+  //Choose a long, secure secret key (keep this safe on the server environment).
+  secretHMACKey = []byte("your-super-secure-32-byte-secret-key")//jct
   redis_db *redis.Client
   oneRedisClientOnly sync.Once
   sessionConfig atomic.Value  //Initialize a single atomic.Value.
   //Define package-level errors.
   ErrKeyNotFound = errors.New("session not found or expired")
-
-  //Grouping together three related variables in a single package-level variable, protect.
-  shr = struct{  //Unnamed struct.
-    /***
-    It allows read-only operations to proceed in parallel with each other, but write operations to have fully exclusive access; this
-    lock is called a multiple readers, single writer lock.
-
-    It's only profitable to use an RWMutex when most of the goroutines that acquire the lock are readers, and the lock is under
-    contention, that is, goroutines routinely have to wait to acquire it. An RWMutex requires more complex internal bookkeeping,
-    making it slower than a regular mutex for uncontended locks.
-    ***/
-    session_lock sync.RWMutex  //Lock for the sessions map.
-    //Store the session information for each user in memory.
-    sessions map[string]session_token  //key: sessionToken, value: session
-    //Store the username and password for each user.
-    // users map[string][]byte //key: username, value: password
-    // user_pwd sync.RWMutex  //Protect the map; embedded field.
-    // file_user_pwd sync.Mutex  //Protect the file.
-  }{
-    sessions: make(map[string]session_token, 16),  //key: sessionToken, value: session
-    //users: make(map[string][]byte, 16),
-  }
+  ErrMalformedCookie = errors.New("malformed session cookie layout")
+  ErrTamperedCookie = errors.New("session cookie signature is invalid or tampered")
+  ErrInvalidTimestamp = errors.New("session cookie contains an invalid expiration timestamp")
 )
-
-type session_token struct{
-  userName string
-  expiry time.Time  //Enforce periodic session termination as a way to prevent session hijacking.
-  csrfToken string
-}
 
 func init() {
   //Initialize with default values so .Load() never returns nil.
   SetSessionTimeout(10 * time.Minute)
-}
-
-//Determine if a session has expired.
-func IsSessionExpired(sessionToken string) bool {
-  shr.session_lock.RLock()
-  st, exists := shr.sessions[sessionToken]
-  shr.session_lock.RUnlock()
-  if exists {
-    //If expiry is BEFORE the current time, it has expired.
-    var expired bool = st.expiry.Before(time.Now())
-    if expired {
-      shr.session_lock.Lock()  //Writer.
-      delete(shr.sessions, sessionToken)  //Delete the session.
-      shr.session_lock.Unlock()
-    }
-    return expired
+  /*** jct
+  //Attempt to load the secret key from the environment variables.
+  envKey := (os.Getenv("SESSION_SECRET_KEY"))
+  if envKey != nil {
+    secretHMACKey = []byte(envKey)
   }
-  return !exists
-}
-
-func SessionExists(sessionToken string) bool {
-  shr.session_lock.RLock()  //Readers lock.
-  _, exists := shr.sessions[sessionToken]
-  shr.session_lock.RUnlock()
-  return exists
-}
-
-func CompareUuids(csrf, sessionToken string) bool {
-  shr.session_lock.RLock()
-  defer shr.session_lock.RUnlock()
-  st, exists := shr.sessions[sessionToken]
-  if exists {
-    return strings.EqualFold(csrf, st.csrfToken)
+  **/
+  //Enforce strict security verification: key must be present and strong 32 bytes (256 bits) is the standard required
+  //minimum length for HMAC-SHA256.
+  if len(secretHMACKey) < 32 {
+    panic("CRITICAL CONFIGURATION ERROR: " +
+          "The 'SESSION_SECRET_KEY' environment variable must be set and be at least 32 bytes long to secure cookies!")
   }
-  return exists
 }
 
-func HashSecret(secret string) ([]byte, error) {
-  hashedSecret, err := bcrypt.GenerateFromPassword([]byte(secret), bcrypt.DefaultCost)
-  return hashedSecret, err
-}
-
-func CompareHashAndPassword(hashedPassword []byte, password []byte) (bool, error) {
-  err := bcrypt.CompareHashAndPassword(hashedPassword, password)
-  return err == nil, err
-}
-
-func GetNewUuid() string {
-  return uuid.NewString()
-}
-
-func CreateCookie(sessionToken string) (cookie *http.Cookie) {
+/***
+Calling this function to construct a fresh cookie is much cleaner and safer than trying to modify and reuse the incoming,
+stripped-down reference variable pulled from the req.Cookie() slice.
+***/
+func CreateCookie(name, value string) (cookie *http.Cookie) {
   /***
   https://en.wikipedia.org/wiki/HTTP_cookie
   https://httpwg.org/specs/rfc6265.html
@@ -149,149 +85,25 @@ func CreateCookie(sessionToken string) (cookie *http.Cookie) {
   When a browser sends a cookie back to the Go server in a request header, it only sends the name and the value (e.g., Cookie: session_token=abc123xyz). The browser strips out the Expires, Path, and Domain fields before sending it over the network.
   ***/
   cookie = &http.Cookie{
-    Name: "session_token",
-    Value: sessionToken,
+    Name: name,
+    Value: value,
     /***
     Whenever you create or delete a cookie, always explicitly set Path: "/". If you omit the path, the browser defaults to the
     current URL directory, which instantly creates duplicate cookie risks when users navigate your site.
     ***/
-    Path: "/",  //Always lock down the Path.
-    HttpOnly: true,  //Security: prevent XSS access.
-    SameSite: http.SameSiteStrictMode,
-    Secure: true,  //Security: HTTPS only.
+    Path: "/",  //Always lock down the Path; accessible across the entire domain scope.
+    MaxAge: -1,  //Instruct the browser to delete immediately.
+    Expires: time.Unix(1, 0),
+    /***
+    Since we are running over HTTPS, we should strictly enforce these three security flags on the http.Cookie struct when
+    creating or updating it.
+    ***/
+    HttpOnly: true,  //Prevent JavaScript (XSS attacks) from reading the cookie.
+    SameSite: http.SameSiteStrictMode,  //Block cross-site request context leaks (add CSRF layer defense).
+    Secure: true,  //Force the browser to ONLY send the cookie over HTTPS.
   }
   return
 }
-
-func AddEntryToSessions(userName string) (sessionToken string, session session_token) {
-  /***
-  Session based authentication keeps the users' sessions secure in a couple of ways:
-  1. Since the session tokens are randomly generated, its near-impossible for a malicious user to brute-force his way into a
-     user's session.
-  2. If a user's session token is compromised somehow, it cannot be used after its expiry. This is why the expiry time is
-     restricted to small intervals (a few seconds to a couple of minutes).
-  ***/
-  sessionToken = uuid.NewString()
-  session = session_token{
-    userName: userName,
-    expiry: time.Now().Add(time.Duration(sessionTimeout)),
-    csrfToken: uuid.NewString(),
-  }
-  shr.session_lock.Lock()  //Writer.
-  shr.sessions[sessionToken] = session
-  shr.session_lock.Unlock()
-  return
-}
-
-func UpdateEntryInSessions(oldSessionToken string) (newSessionToken string, session session_token) {
-  newSessionToken = uuid.NewString()
-  session = session_token{
-    expiry: time.Now().Add(time.Duration(sessionTimeout)),
-    csrfToken: uuid.NewString(),
-  }
-  shr.session_lock.Lock()  //Writer.
-  defer shr.session_lock.Unlock()
-  //Fetch the existing session data and confirm it actually exists.
-  oldSession, exists := shr.sessions[oldSessionToken]
-  if !exists {
-    return "", session_token{}  //Signal failure to the middleware.
-  }
-  session.userName = oldSession.userName  //Transfer the user name to the new session.
-  delete(shr.sessions, oldSessionToken)
-  shr.sessions[newSessionToken] = session
-  return newSessionToken, session
-}
-
-func DeleteSession(sessionToken string) (cookie *http.Cookie) {
-  shr.session_lock.Lock()  //Writer.
-  delete(shr.sessions, sessionToken)
-  shr.session_lock.Unlock()
-  //Clear the browser cookie.
-  cookie = &http.Cookie{
-    Name: "session_token",
-    Value: "",
-    Path: "/",
-    MaxAge: -1,
-    HttpOnly: true,
-    SameSite: http.SameSiteStrictMode,
-    Secure: false,
-  }
-  return
-}
-
-func GetUserName(sessionToken string) string {
-  shr.session_lock.RLock()
-  defer shr.session_lock.RUnlock()
-  return shr.sessions[sessionToken].userName
-}
-
-func GetNumberOfSessions() int {
-  shr.session_lock.RLock()
-  defer shr.session_lock.RUnlock()
-  return len(shr.sessions)
-}
-
-func (st *session_token) GetCsrfToken() string {
-  return st.csrfToken
-}
-
-func (st *session_token) GetExpiry() time.Time {
-  return st.expiry
-}
-
-func (st *session_token) GetUserName() string {
-  return st.userName
-}
-
-/***
-StartSessionSweeper kicks off a persistent background routine that deletes expired sessions from memory. Call this once
-inside the main() function when starting the application.
-***/
-func StartSessionSweeper(timeout time.Duration) {
-  //Fire and forget.
-  go func(timeout time.Duration) {
-    //Evaluate and purge the memory map every timeout value.
-    ticker := time.NewTicker(timeout)
-    //Keep looping in the background indefinitely.
-    for range ticker.C {
-      now := time.Now()
-      var expiredTokens []string
-      shr.session_lock.RLock()  //Read lock to scan and find expired tokens.
-      for tokenKey, sessionItem := range shr.sessions {
-        //If the session has officially crossed its expiration timeline.
-        if now.After(sessionItem.expiry) {
-          expiredTokens = append(expiredTokens, tokenKey)
-        }
-      }
-      shr.session_lock.RUnlock()
-      logger.LogInfo(fmt.Sprintf("Deleting %d session entries from the sessions map.", len(expiredTokens)), falseCorrelationId)
-      //Write lock but only if there are actual items to delete.
-      if len(expiredTokens) > 0 {
-        shr.session_lock.Lock()
-        for _, token := range expiredTokens {
-          delete(shr.sessions, token)
-        }
-        shr.session_lock.Unlock()
-      }
-    }
-  }(timeout)
-  //StartSessionSweeper finishes instantly, but the goroutine keeps running.
-}
-
-
-
-
-func GetSessionTokens() (keys []string) {
-  shr.session_lock.RLock()
-  for key := range shr.sessions {
-    keys = append(keys, key)
-  }
-  shr.session_lock.RUnlock()
-  return keys
-}
-
-//------------------------------
-
 
 /***
 To ensure a CSRF token cannot be guessed by an attacker, generate it using Go's crypto/rand package (never use math/rand).
@@ -394,7 +206,7 @@ func VerifyWritePermissions() error {
   return nil
 }
 
-func SaveRedis(ctx context.Context, userName string) (*http.Cookie, error) {
+func SetRedis(ctx context.Context, userName string) (*http.Cookie, error) {
   timeCfg := GetSessionTimeoutConfig()
   //Setting the key to "session:" + sessionID creates a structured namespace in Redis.
   sessionId, _ := GenerateRandomToken()
@@ -416,11 +228,38 @@ func SaveRedis(ctx context.Context, userName string) (*http.Cookie, error) {
     return nil, err
   }
   sessionExpiresAt := time.Now().Add(timeCfg.Timeout)
-  cookieValue := fmt.Sprintf("%s|%d", sessionId, sessionExpiresAt.Unix())
-  cookie := CreateCookie(cookieValue)
+  //Convert "uuid|timestamp" into "uuid|timestamp|signature".
+  signedCookieValue := SignCookieValue(sessionId, sessionExpiresAt.Unix())
+  cookie := CreateCookie("session_token", signedCookieValue)
   cookie.MaxAge = int(timeCfg.Timeout.Seconds())
   cookie.Expires = sessionExpiresAt
   return cookie, nil
+}
+
+func HSetRedis(ctx context.Context, userName, partitionName string, jsonBytes []byte) error {
+  timeCfg := GetSessionTimeoutConfig()
+  key := "user:data:" + userName
+  //Write the fields into the Redis Hash.
+  err := redis_db.HSet(ctx, key, partitionName, string(jsonBytes)).Err()
+  if err != nil {
+    return err
+  }
+  /***
+  HSet itself does not have a built-in parameter to accept a TTL duration like Set does. To apply an expiration to a Redis Hash,
+  you must perform a two-step operation: first, write or update the fields using HSet, and then immediately apply the timeout
+  to the entire key using the Expire method.
+
+  Because we are using the root key "user:data: + userName", the entire Redis Hash shares a single TTL (Time-To-Live).
+  * Logout/Timeout: When the root key expires or is deleted via sess.DelRedis(ctx, "user:data:" + userName), all partitions inside
+  it are wiped out instantly.
+  * Rolling Timeout: When we execute sess.ExpireRedis(ctx, "user:data:" + userName, timeCfg.Timeout) inside the rolling refresh,
+  the lifecycle of all partitions is bumped simultaneously.
+  ***/
+  err = redis_db.Expire(ctx, key, timeCfg.Timeout).Err()
+  if err != nil {
+    return err
+  }
+  return nil
 }
 
 /***
@@ -452,6 +291,18 @@ func GetRedis(ctx context.Context, key string) ([]byte, error) {
     return nil, err  //Redis error.
   }
   return dataBytes, nil  //Key exists in Redis and the session is active.
+}
+
+func HGetRedis(ctx context.Context, key, partitionName string) (string, error) {
+  //Fetch only the JSON string for the specific partition.
+  jsonStr, err := redis_db.HGet(ctx, key, partitionName).Result()
+  if err != nil {
+    if errors.Is(err, redis.Nil) {
+      return "", ErrKeyNotFound  //Partition or user data does not exist.
+    }
+    return "", err  //Redis error.
+  }
+  return jsonStr, nil
 }
 
 /***
@@ -486,4 +337,74 @@ System/Network Error ->  false   error    Treat the boolean value as undefined (
 ***/
 func ExpireRedis(ctx context.Context, key string, timeout time.Duration) (bool, error) {
   return redis_db.Expire(ctx, key, timeout).Result()
+}
+
+/***
+Call when creating or refreshing a cookie.
+Because everything happens strictly in-memory using infallible standard library operations, SignCookieValue is a deterministic,
+pure function. It will either succeed 100% of the time, or the entire Go runtime itself has crashed (e.g., out of physical RAM).
+
+The only way this function could cause an application issue is if the secretHMACKey is completely empty or hasn't been loaded
+from the environment variable yet. If the key is empty, the function still won't crash; it will just generate a weak,
+unsecure signature.
+***/
+func SignCookieValue(sessionId string, expiryUnix int64) string {
+  //Recreate your original plain-text layout
+  payload := fmt.Sprintf("%s|%d", sessionId, expiryUnix)
+  //Create a cryptographic hash of that payload using the secret key.
+  mac := hmac.New(sha256.New, secretHMACKey)
+  //Because underlying cryptographic hash state updates are memory-only operations, they cannot fail. It always returns nil for errors.
+  mac.Write([]byte(payload))
+  signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+  //Return the final 3-part cookie string.
+  return payload + "|" + signature
+}
+
+/***
+It parses and validates the client-side session cookie string.
+VerifyAndSplitCookie is completely safe against malicious input. Unlike the signing function, the verification function parses
+raw strings sent directly from the client's browser, which means it must be designed to catch malformed data, unexpected
+characters, and empty tokens without panicking.
+***/
+func VerifyAndSplitCookie(cookieValue string) (string, int64, error) {
+  /***
+  Checking len(cookieValue) < 40 at the very top cuts off heavy execution immediately if an attacker tries to flood the middleware
+  route headers with thousands of small, broken string fragments.
+  ***/
+  if len(cookieValue) < 40 {  //A minimal layout "uuid|timestamp|signature" will always exceed 40 chars.
+    return "", 0, ErrMalformedCookie
+  }
+  //Split the token on the pipe separator.
+  parts := strings.Split(cookieValue, "|")
+  if len(parts) != 3 {
+    return "", 0, ErrMalformedCookie
+  }
+  sessionId := parts[0]
+  expiryTime := parts[1]
+  incomingSignature := parts[2]
+  //Guard against blank structural sub-strings (e.g., "||signature" or "uuid||signature").
+  if sessionId == "" || expiryTime == "" || incomingSignature == "" {
+    return "", 0, ErrMalformedCookie
+  }
+  //Recreate the payload to verify against the signature.
+  payload := sessionId + "|" + expiryTime
+  mac := hmac.New(sha256.New, secretHMACKey)
+  mac.Write([]byte(payload))
+  expectedSignature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+  //Use ConstantTimeCompare to prevent timing attacks.
+  //If the user modified the timestamp or ID, the signature check fails immediately here.
+  if !hmac.Equal([]byte(incomingSignature), []byte(expectedSignature)) {
+    return "", 0, ErrTamperedCookie
+  }
+  /***
+  Parse the Unix timestamp.
+  We check the cryptographic HMAC signature before calling strconv.ParseInt. String conversion routines can occasionally consume
+  noticeable processing time if malicious input contains millions of arbitrary text numbers. By validating the signature first,
+  the hot path middleware guarantees it will only run numerical conversions on packets originally sealed by your server.
+  ***/
+  expiryUnix, err := strconv.ParseInt(expiryTime, 10 /*base*/, 64 /*int64*/)
+  if err != nil {
+    return "", 0, err
+  }
+  return sessionId, expiryUnix, nil
 }

@@ -2,12 +2,7 @@ module github.com/juan-carlos-trimino/go-sessions
 
 go 1.26.4
 
-require (
-	github.com/google/uuid v1.6.0
-	github.com/juan-carlos-trimino/go-logger v1.0.9
-	github.com/redis/go-redis/v9 v9.22.0
-	golang.org/x/crypto v0.57.0
-)
+require github.com/redis/go-redis/v9 v9.22.0
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
