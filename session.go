@@ -9,6 +9,9 @@ import (
   "encoding/json"
   "errors"
   "fmt"
+  //Run this command in your terminal to install the standard JWT library for Go:
+  // $ go get -u github.com/golang-jwt/jwt/v5
+  "github.com/golang-jwt/jwt/v5"
   //The option -u instructs 'get' to update the module with dependencies.
   //go get -u github.com/redis/go-redis/v9
   //go get github.com/redis/go-redis/v9
@@ -45,6 +48,7 @@ type SessionInfo struct{
 var (
   //Choose a long, secure secret key (keep this safe on the server environment).
   secretHMACKey = []byte("your-super-secure-32-byte-secret-key")//jct
+  jwtAdminKey = []byte("your_ultra_secure_secret_key_here")  //jct
   redis_db *redis.Client
   oneRedisClientOnly sync.Once
   sessionConfig atomic.Value  //Initialize a single atomic.Value.
@@ -407,4 +411,63 @@ func VerifyAndSplitCookie(cookieValue string) (string, int64, error) {
     return "", 0, err
   }
   return sessionId, expiryUnix, nil
+}
+
+/***
+Verification of JWT.
+1. Extraction: The server retrieves the token from the incoming HTTP request (usually from the Authorization: Bearer <token> header
+   or a secure cookie).
+2. Signature Re-calculation: The server extracts the Header and Payload from the token, joins them, and hashes them using the algorithm
+   specified in the header and the server's private/secret key. If this newly generated signature matches the signature attached to the
+   token, it proves the payload has not been tampered with.
+3. Claims Validation: Once the signature is proven authentic, the server evaluates standard time-based fields embedded in the payload,
+   ensuring the current time is before the expiration time and after the "not before" time.
+***/
+func ValidateJwtToken(tokenString string) (jwt.MapClaims, error) {
+  token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+    /***
+    Verify signature algorithm is HMAC. Without this check, an attacker could change the token header to {"alg": "none"} or exploit a
+    "Symmetric-Asymmetric Key Confusion" vulnerability to bypass security entirely.
+    ***/
+    if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+      return nil, jwt.ErrSignatureInvalid
+    }
+    //Return the secret key used to verify the signature.
+    return jwtAdminKey, nil
+  })
+  if err != nil {
+    return nil, err
+  }
+  //Extract and validate claim.
+  if claim, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+    return claim, nil
+  }
+  return nil, jwt.ErrTokenUnverifiable
+}
+
+/***
+By default, standard JWTs are signed, not encrypted. This means anyone who intercepts the token can decode and read its payload contents.
+A common point of confusion is thinking that JWT data are hidden.
+Data is public: Standard JWTs are base64-encoded, not encrypted. Anyone who intercepts the token can read the content inside the payload.
+Tamper-proof, not secret: The security of a JWT relies entirely on its signature. The server uses a secret key to sign the token. If a
+malicious actor modifies the payload, the signature becomes invalid, and it will be rejected.
+***/
+func GenerateJwtToken(jwtToken bool) (string, error) {
+  //JSON Web Tokens require times -- such as expiration (exp) or issued-at (iat) -- to be encoded as a Unix epoch timestamp in seconds.
+  claim := jwt.MapClaims{
+    "is_admin": jwtToken,
+    // "iss": "self",  //Issuer - Who issued the token.
+    // "aud": []string{"self"},  //Audience - Who the token is intended for.
+    "exp": jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),  //Expires at - When the token expires.  jct
+    "iat": jwt.NewNumericDate(time.Now()),  //Issued at - When the token was issued.
+    "nbf": jwt.NewNumericDate(time.Now()),  //Not before - When the token becomes valid.
+  }
+  //Declare signing method HS256.
+  token := jwt.NewWithClaims(jwt.SigningMethodHS256, claim)
+  //Cryptographically hashes the combined header and payload using the secret key via the standard HMAC-SHA256 (HS256) protocol.
+  tokenString, err := token.SignedString(jwtAdminKey)
+  if err != nil {
+    return "", err
+  }
+  return tokenString, nil
 }
