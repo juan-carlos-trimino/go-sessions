@@ -77,6 +77,16 @@ func init() {
   }
 }
 
+func SetSessionTimeout(timeout time.Duration) {
+  //Create a brand-new, isolated struct instance.
+  newCfg := &SessionTimeoutConfig{
+    Timeout: timeout,
+    Threshold: timeout >> 1,  //Shift right by 1 to divide by 2.
+  }
+  //Atomically swap the pointer. This happens in a single CPU instruction.
+  sessionConfig.Store(newCfg)
+}
+
 /***
 Calling this function to construct a fresh cookie is much cleaner and safer than trying to modify and reuse the incoming,
 stripped-down reference variable pulled from the req.Cookie() slice.
@@ -128,16 +138,6 @@ func GetSessionTimeoutString() string {
     int(tc.Timeout.Seconds())%60, int(tc.Timeout.Milliseconds())%1000)
 }
 
-func SetSessionTimeout(timeout time.Duration) {
-  //Create a brand-new, isolated struct instance.
-  newCfg := &SessionTimeoutConfig{
-    Timeout: timeout,
-    Threshold: timeout >> 1,  //Shift right by 1 to divide by 2.
-  }
-  //Atomically swap the pointer. This happens in a single CPU instruction.
-  sessionConfig.Store(newCfg)
-}
-
 //Read safely from anywhere without locks.
 func GetSessionTimeoutConfig() *SessionTimeoutConfig {
   return sessionConfig.Load().(*SessionTimeoutConfig)
@@ -167,7 +167,7 @@ To fully verify that your Redis client is up, running, and ready for production 
 redis.DBSize() or a lightweight write/read operation.
 The Enhanced Health Check Pattern
 ***/
-func VerifyHealth() error {
+func VerifyHealthRedis() error {
   if redis_db == nil {
     return errors.New("redis client is not initialized")
   }
