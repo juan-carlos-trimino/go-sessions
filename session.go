@@ -1,3 +1,12 @@
+//To fold all block comments:
+//  Ctrl+K and Ctrl+/
+//To unfold all block comments:
+//  Ctrl+K and Ctrl+J
+//
+//Build constraint: Only include this file in the build if the target OS is Linux and NOT Windows.
+//Note: There must be a blank line between the build constraints and the 'package' keyword.
+//go:build linux && !windows
+
 package sessions
 
 import (
@@ -297,16 +306,16 @@ func GetRedis(ctx context.Context, key string) ([]byte, error) {
   return dataBytes, nil  //Key exists in Redis and the session is active.
 }
 
-func HGetRedis(ctx context.Context, key, partitionName string) (string, error) {
+func HGetRedis(ctx context.Context, key, partitionName string) ([]byte, error) {
   //Fetch only the JSON string for the specific partition.
-  jsonStr, err := redis_db.HGet(ctx, key, partitionName).Result()
+  jsonBytes, err := redis_db.HGet(ctx, key, partitionName).Bytes()
   if err != nil {
     if errors.Is(err, redis.Nil) {
-      return "", ErrKeyNotFound  //Partition or user data does not exist.
+      return nil, ErrKeyNotFound  //Partition or user data does not exist.
     }
-    return "", err  //Redis error.
+    return nil, err  //Redis error.
   }
-  return jsonStr, nil
+  return jsonBytes, nil
 }
 
 /***
