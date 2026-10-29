@@ -1,7 +1,8 @@
 # Development
-Creating tags and pushing to GitHub for every single change is incredibly slow and tedious. The standard to handle this in Go is using **Go Workspaces (`go.work`)** or a local **`replace` directive**. This allows you to edit your separate packages locally, and your main application will see the changes instantly without pushing or tagging anything to GitHub. Here you will be using the **Go Workspaces**.
+Creating tags and pushing to GitHub for every single change is incredibly slow and tedious. The standard to handle this in Go is using **Go Workspaces (`go.work`)** or a local **`replace` directive**. This allows you to edit your separate packages locally, and your main application will see the changes instantly without pushing or tagging anything to GitHub.
 
-Go Workspaces allow you to tell the Go compiler to look at a group of local folders simultaneously. It overrides all remote GitHub downloads for those packages while you are coding.
+## Use the Go Workspaces
+`Go Workspaces` allows you to tell the Go compiler to look at a group of local folders simultaneously; it overrides all remote GitHub downloads for those packages while you are coding.
 
 Assume your directory structure looks like this:
 ```
@@ -37,21 +38,24 @@ use (
 )
 ```
 
-You can now open your IDE, make a change inside `go-sessions`, and immediately run `go run main.go` inside `fin-finance/src`. Go will use your live local changes instantly. When you are finally ready for production, you tag and push your packages all at once.
+You can now open your IDE, make a change inside `go-sessions`, and immediately run `go run main.go` inside `fin-finance/src`. Go will use your local changes instantly. When you are finally ready for production, you tag and push your packages all at once.
 
-Finally, you may want to add `go.work` to your `.gitignore` file so it doesn't get push to git.
+Finally, you may want to ensure that the fle `go.work` does not get push to your git repository.
 
-# Debugging
-To debug code inside a dependency module (`go-sessions`) while running your `main module`, you need to tell the Go compiler to use a local copy of `go-sessions` instead of its cache, read-only version in `$GOPATH/pkg/mod`.
+## Use a replace directive
+You can explicitly force the `main module` to look at the local file system for dependency modules (e.g., `go-sessions`) by using the `replace directive`. However, because the `replace directive` modifies the file `go.mod`, you risk committing a local path, which may create problems for other developers and your remote CI/CD engine. Obviously, the greatest risk is that your local path does not exist in their environments, thereby breaking the build.
 
-## Use a replace Directive
-You can explicitly force your `main module` to look at your local file system for `go-sessions`. The following steps will guide you:
+To debug the code inside a dependency module while running your `main module`, you need to tell the Go compiler to use a local copy of the dependency module instead of its cache, read-only version in `$GOPATH/pkg/mod`.
+
+To debug the dependency module `go-sessions`, you need to do the following:
 1. Edit the main `go.mod`.
 2. Add a *replace directive* at the bottom of your `go.mod` file pointing to the relative or absolute path of your local dependency:
     ```
     module finance
 
     go 1.26.4
+
+    ...
 
     require (
       github.com/juan-carlos-trimino/go-sessions go-sessions/v1.x.x
