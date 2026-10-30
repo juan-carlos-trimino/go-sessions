@@ -1,6 +1,7 @@
 # Development
-Creating tags and pushing to GitHub for every single change is incredibly slow and tedious. The standard to handle this in Go is using **Go Workspaces (`go.work`)** or a local **`replace` directive**. This allows you to edit your separate packages locally, and your main application will see the changes instantly without pushing or tagging anything to GitHub.
+Creating tags and pushing to GitHub for every single change is incredibly slow and tedious. The standard to handle this in Go is using **Go Workspaces (`go.work`)** or a local **`replace directive`**. This allows you to edit your separate packages locally, and your main application will see the changes instantly without pushing or tagging anything to GitHub.
 
+---
 ## Use the Go Workspaces
 `Go Workspaces` allows you to tell the Go compiler to look at a group of local folders simultaneously; it overrides all remote GitHub downloads for those packages while you are coding.
 
@@ -15,12 +16,12 @@ Assume your directory structure looks like this:
       └ go-sessions/       (Package)
 ```
 1. Open your terminal and navigate to your top-level project root (`~/repos/fin-meta-repo/`).
-2. Initialize a workspace by running:<br>
+2. Initialize a workspace by running:
     ```
     go work init
     ```
 
-3. Add your main app and local packages to the worspace:<br>
+3. Add your main app and local packages to the worspace:
    ```
    go work use ./fin-finance/src
    go work use ../gp-meta-repo/go-middlewares
@@ -42,10 +43,11 @@ You can now open your IDE, make a change inside `go-sessions`, and immediately r
 
 Finally, you may want to ensure that the fle `go.work` does not get push to your git repository.
 
+---
 ## Use a replace directive
-You can explicitly force the `main module` to look at the local file system for dependency modules (e.g., `go-sessions`) by using the `replace directive`. However, because the `replace directive` modifies the file `go.mod`, you risk committing a local path, which may create problems for other developers and your remote CI/CD engine. Obviously, the greatest risk is that your local path does not exist in their environments, thereby breaking the build.
+You can explicitly force the `main module` to look at the local file system for dependency modules (`go-sessions`) by using the `replace directive`. However, because the `replace directive` modifies the file `go.mod`, you risk committing a local path, which may create problems for other developers and your remote CI/CD engine. Obviously, the greatest risk is that your local path does not exist in their environments, thereby breaking the build.
 
-To debug the code inside a dependency module while running your `main module`, you need to tell the Go compiler to use a local copy of the dependency module instead of its cache, read-only version in `$GOPATH/pkg/mod`.
+To debug the code inside a dependency module while running your `main module`, you need to tell the Go compiler to use the local copy of the dependency module instead of its cache, read-only version in `$GOPATH/pkg/mod`.
 
 To debug the dependency module `go-sessions`, you need to do the following:
 1. Edit the main `go.mod`.
@@ -65,162 +67,94 @@ To debug the dependency module `go-sessions`, you need to do the following:
     replace github.com/juan-carlos-trimino/go-sessions => ../../../gp-meta-repo/go-sessions/
     ```
 3. Run Delve or your IDE Debugger.<br>
-   Run your debugger from the main module; you can now open files from `../../../gp-meta-repo/go-sessions/`, insert breakpoints, and step into them. The folder path specified in your replace directive ***must exactly match*** the folder path you have open in your IDE.
+   Run your debugger from the main module; you can now open files from `../../../gp-meta-repo/go-sessions/`, insert breakpoints, and step into them. The folder path specified in your `replace directive` ***must exactly match*** the folder path you have open in your IDE.
 
 Finally, remember to remove this line before pushing your `go.mod` file to production.
 
-# Tags
-## Create tags
-Clone the repo.
+---
+## Installation
+This package does not use release tags. To avoid Go's default tag resolution behavior, you must always specify an explicit branch name or a Git commit hash.
+
+### Target the Latest Version (Commit Hash) from the Production Branch
+To pull the latest updates from the primary branch:
 ```
-git clone https://github.com/juan-carlos-trimino/go-sessions.git
+go get github.com/juan-carlos-trimino/go-sessions@main
 ```
 
-Change directory.
+### Target a Specific Version (Commit Hash)
+To lock your project to a specific point in time for reproducible builds, pass the explicit Git commit hash (short or full SHA):
 ```
-cd go-sessions
-```
-
-If a `go.mod` file already exists, **skip** this step; otherwise, execute `go mod init github.com/{GitHub-Username}/{Repo-Name}`. If you run `go mod init` on an existing Go package, the command will fail and throw an error because the module has already been initialized by whoever created it.
-```
-go mod init github.com/juan-carlos-trimino/go-sessions
+go get github.com/juan-carlos-trimino/go-sessions@4b258e8
 ```
 
-Modify your Go files and then commit and push the code.
+### Target a Development or Feature Branch
+To test unmerged changes or experimental work located on a separate branch (e.g., `dev` or `feature-xyz`):
 ```
-git add .
-git commit -m "your comments here."
-git push origin main
-```
-
-Go uses `Git Tags` to manage versions of the code. Create the tag and push it; ensure the version is changed accordingly.
-```
-git tag "go-sessions/v1.0.0"
-git push origin go-sessions/v1.0.0
+go get github.com/juan-carlos-trimino/go-sessions@<branch-name>
 ```
 
-To use the package, install it (`go get -u {copy the repo url from GitHub}`).
+---
+## Tracking New Versions
+Because this repository does not use traditional Git tags, major updates and versions are signaled directly within the repository's commit history.
+
+### Commit Message Prefixes
+You can easily scan the commit history to determine which snapshots are safe for production:
+* `[v1.0.0] rel:` — Identifies stable version milestones recommended for production.
+* `[v1.1.0] feat:` — Introduces a new feature or public capability.
+* `[v1.1.1] fix:` — Patches a bug or structural issue.
+* `[v1.1.2] docs:` — Indicates documentation-only updates with no behavioral changes.
+
+### How to Find and Copy Version Hashes
+Users can find and copy the required commit hashes directly from GitHub or via the terminal.
+
+### Option A: Using the GitHub UI
+1. Navigate to the repository page: `github.com/juan-carlos-trimino/go-sessions`.
+2. Click on the **Commits** history link (located right above the file list on the right side).
+3. Locate the `[vX.Y.Z] rel:` milestone commit you want.
+4. Click the small **Copy full SHA** icon or grab the short 8-character hash listed next to the commit.
+
+### Option B: Using the Local Terminal
+If you have cloned the repository locally, list the commit history with short hashes by running:
 ```
-go get -u github.com/juan-carlos-trimino/go-sessions
+git log --oneline
 ```
 
-Next, open the file that will use the package and add this line (`github.com/{GitHub-Username}/{Repo-Name}`).
+To display the last **m** commits:
 ```
+git log --online -n m
+```
+
+To filter by **[vX**:
+```
+git log --oneline --grep='^\[v[0-9]'
+```
+
+Copy the required hash from the leftmost column (e.g., `a1b2c3d`) to use in your `go get` command.
+
+---
+## Quick Start
+
+```
+package main
+
 import (
-  "github.com/juan-carlos-trimino/go-sessions"
+	"fmt"
+	"github.com/juan-carlos-trimino/go-sessions"
 )
-```
 
-To upgrade/downgrade the version of the package, move to the root of the module's directory (where the `go.mod` file is located) and execute (`go get -u "{package-name}@{git-commit-hash}"` or `go get -u "{package-name}@{version}"`).
-```
-go get -u "github.com/juan-carlos-trimino/go-sessions@xxxxxxx"
-
-# or
-go get -u "github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.x.x"
-```
-
-## Delete and reuse a Git tag
-In Git, ***tags belong to the entire repository, not to individual packages***. Git does not track folders or packages independently when it comes to versioning; it only tracks the history of the entire project tree as single commits. Therefore, to prevent tags from overwriting each other, the standard convention in Go is to prefix the tag with the package's folder path.
-
-With that said, to delete and reuse a Git tag (version) on both **your local machine and remote repository (e.g., GitHub or GitLab)**, you must force-delete the tag from **both locations** and then clear Go's proxy cache so it realizes the tag has changed.
-
-Delete the tag from your local machine, but ONLY the module `go-sessions` with version `go-sessions/v1.1.1`.
-```
-git tag -d go-sessions/v1.1.1
-```
-
-Delete the tag from the remote repository.
-```
-git push origin --delete go-sessions/v1.1.1
-```
-
-After you create the new tag, you can assign that same tag version to your current commit (or a specific commit) and push it back up:
-```
-# Tag the current HEAD commit with the reused name.
-git tag go-sessions/v1.1.1
-
-# Push the new tag to the remote repository.
-git push origin go-sessions/v1.1.1
-```
-
-If you want to tag a specific older commit instead of your current HEAD, just add the commit hash to the end of the creation command:
-```
-git tag go-sessions/v1.1.1 xxxxxxx
-```
-
-From your main project directory, you must clear Go's local download cache on your machine so it deletes the old version of the tag. The command below wipes out all downloaded dependencies locally, forcing Go to redownload them cleanly from the internet the next time you build or run `go get`.
-```
-go clean -modcache
+func main() {
+	// Your initial package configuration goes here
+	fmt.Println("Sessions initialized successfully.")
+}
 ```
 
 ---
-**Warning**
-Reusing tags can cause headaches for other developers on your team.
-
-If a coworker already pulled down the old `go-sessions/v1.1.1` tag, their local Git will ***refuse to update it automatically*** when they run `git pull`. They will still be pointing to the old commit, which can cause deployment or building mismatches.
-
-If you have teammates, your teammates must force-update their local tags by running:
-```
-git fetch --tags --force
-go clean -modcache
-```
----
-
-Move to the main project directory that *uses* your `go-sessions` package. Because Go utilizes the Google's public caching proxy servre (`proxy.golang.org`) by default, the proxy might cache your old tag for up to 24 hours. To bypass the proxy and force Go to pull the absolute newest tag directly from your repository, use the ***GOPROXY=direct*** override flag when fetching it:
-```
-GOPROXY=direct go get github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.1.1
-```
-
-Tidy up your go.mod references.
-```
-go mod
-```
-
-## Delete all tags
-To delete all tags and start from v1.0.0, you need to execute a bulk local deletion, a remote purging command, and force Go to reset its historical validation trackers.
-
-Delete all tags starting with `go-sessions/` from your local machine (Linux).
-```
-git tag -l "go-sessions/*" | xargs git tag -d
-```
-
-Next, delete all tags from the repository.
-```
-git tag -l "go-sessions/*" | xargs -I {} git push origin --delete {}
-```
-
-Now that the `go-sessions` namespace is completely clean, tag your current commit with your new starting version and push it up.
-```
-git tag go-sessions/v1.0.0
-
-# Push ONLY this tag to the remote.
-git push origin go-sessions/v1.0.0
-```
-
-Just like before, force Go to delete the old tags in its cache.
-```
-go clean -modcache
-```
-
-Pull down the newly re-rolled package directly from the repository. If you get a ***checksum error***, you will need to use one of the two following commands.
-```
-GOPROXY=direct go get github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.0.0
-```
+## Production-Ready Checklist
+Before deploying changes utilizing a specific commit version, ensure your application matches the following requirements:
+* [ ] The dependency entry in `go.mod` matches the targeted Git commit hash.
+* [ ] Your project's local `go.sum` file has been verified and committed alongside `go.mod`.
+* [ ] Production deployments utilize a locked hash version rather than tracking moving branch targets like `@main`.
 
 ---
-***Warning***
-If you get a ***checksum error***, you should try the command below. This command tells Go to completely ignore the global checksum database tracking for your username. ***Use with care***.
-```
-export GOSUMDB=off
-```
----
-
-If you get a ***checksum error***, you can temporarily bypass it for your specific private or internal module using GONOSUMDB rather than turning the security feature completely off for your entire computer.
-```
-GOPROXY=direct GONOSUMDB=github.com/juan-carlos-trimino/* go get github.com/juan-carlos-trimino/go-sessions@go-sessions/v1.0.0
-```
-
-Tidy your dependencies.
-```
-go mod tidy
-```
+## License
+This project is licensed under the Apache-2.0 License. See the LICENSE file for details.
